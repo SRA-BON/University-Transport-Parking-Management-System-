@@ -1,0 +1,35 @@
+{
+  "name": "transport-system-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:5173": "vite --port 5173",
+    "dev:5174": "vite --port 5174",
+    "dev:5175": "vite --port 5175",
+    "dev:8080": "vite --port 8080",
+    "dev:3000": "vite --port 3000",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "preview:5173": "vite preview --port 5173",
+    "preview:5174": "vite preview --port 5174",
+    "preview:5175": "vite preview --port 5175"
+  },
+  "dependencies": {
+    "@react-oauth/google": "^0.12.1",
+    "axios": "^1.7.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.1"
+  }
+}
