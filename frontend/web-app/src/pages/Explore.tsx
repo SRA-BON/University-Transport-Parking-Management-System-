@@ -19,6 +19,14 @@ export default function Explore() {
   const [filter, setFilter]   = useState('');
   const [activeBookingMsg, setActiveBookingMsg] = useState<string | null>(null);
   const [now, setNow] = useState<Date>(new Date());
+  
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Multi-select state
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -199,7 +207,7 @@ export default function Explore() {
       {/* ── Header ── */}
       <div style={styles.header}>
         <div>
-          <h2 style={styles.heading}>🚌 Explore Trips</h2>
+          <h2 style={styles.heading}>🚍 Explore Trips</h2>
           <p style={styles.sub}>Browse available buses and book your ride</p>
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -261,7 +269,17 @@ export default function Explore() {
                     <span style={{ marginLeft: 'auto', fontSize: 11 }}>▸</span>
 
                     {statusHover && (
-                      <div style={styles.submenu}>
+                      <div style={{
+                        ...styles.submenu,
+                        ...(isMobile ? {
+                          top: '100%',
+                          left: 0,
+                          width: '100%',
+                        } : {
+                          top: -4,
+                          left: '100%',
+                        })
+                      }}>
                         {(['scheduled', 'in_progress', 'completed', 'cancelled'] as const).map((s) => (
                           <div
                             key={s}
@@ -306,7 +324,7 @@ export default function Explore() {
         <div className="loading-spinner dark" style={{ marginTop: 20 }} />
       ) : filtered.length === 0 ? (
         <div style={styles.empty}>
-          <span style={{ fontSize: 32 }}>🚌</span>
+          <span style={{ fontSize: 32 }}>🚍</span>
           <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>No trips match your search.</p>
         </div>
       ) : (
@@ -346,7 +364,7 @@ export default function Explore() {
                 <div style={styles.infoRow}>
                   <div>
                     <div style={styles.infoLabel}>Bus</div>
-                    <div style={styles.infoValue}>🚌 {t.bus_number}</div>
+                    <div style={styles.infoValue}>🚍 {t.bus_number}</div>
                   </div>
                   <div>
                     <div style={styles.infoLabel}>Departs</div>
@@ -358,7 +376,7 @@ export default function Explore() {
                   <div>
                     <div style={styles.infoLabel}>Seats Left</div>
                     <div style={{ ...styles.infoValue, color: t.available_seats > 0 ? '#2E7D32' : '#C62828' }}>
-                      💺 {t.available_seats}
+                      🪑 {t.available_seats}
                     </div>
                   </div>
                   <div>
@@ -398,7 +416,7 @@ export default function Explore() {
                         onClick={() => navigate(`/trips/${t.id}/modify`)}
                         style={styles.modifyBtn}
                       >
-                        🛠️ Modify
+                        🔧 Modify
                       </button>
                     )}
 
@@ -524,8 +542,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   submenu: {
     position: 'absolute',
-    top: -4,
-    left: '100%',
     minWidth: 180,
     background: 'var(--bg-card)',
     border: '1px solid var(--border-color)',

@@ -20,7 +20,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [paymentBanner, setPaymentBanner] = useState<{ type: 'success' | 'fail' | 'cancelled'; amount?: string } | null>(null);
 
-  const isManagement = user?.role === 'manager' || user?.role === 'developer' || user?.role === 'admin';
+  const isManagement = ['manager', 'developer', 'admin', 'super_admin', 'bus_attendant', 'parking_attendant'].includes(user?.role || '');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -113,7 +113,7 @@ export default function Dashboard() {
               <div key={t.id} style={styles.tripCard}>
                 <div>
                   <div style={styles.tripRoute}>{t.route_name}</div>
-                  <div style={styles.tripMeta}>🚌 {t.bus_number} · 💺 {t.available_seats} seats</div>
+                  <div style={styles.tripMeta}>🚍 {t.bus_number} · 🪑 {t.available_seats} seats</div>
                   <div style={styles.tripTime}>{new Date(t.departure_time).toLocaleString()}</div>
                 </div>
                 <span style={{ ...styles.badge, background: statusColor(t.status) }}>{t.status}</span>
@@ -149,12 +149,12 @@ export default function Dashboard() {
       <h3 style={styles.sectionTitle}>Quick Actions</h3>
       <div style={styles.actionsGrid}>
         <Link to="/explore" style={styles.actionCard}>
-          <span style={styles.actionIcon}>🚌</span>
+          <span style={styles.actionIcon}>🚍</span>
           <span style={styles.actionTitle}>Find a Bus</span>
           <span style={styles.actionDesc}>Browse routes and times</span>
         </Link>
         <Link to="/parking" style={styles.actionCard}>
-          <span style={styles.actionIcon}>🅿️</span>
+          <span style={styles.actionIcon}>🏛️</span>
           <span style={styles.actionTitle}>Parking</span>
           <span style={styles.actionDesc}>Entry, exit & history</span>
         </Link>

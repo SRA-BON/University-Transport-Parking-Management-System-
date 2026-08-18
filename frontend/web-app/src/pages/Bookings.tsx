@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuthStore } from '../store/authStore';
@@ -150,7 +150,7 @@ export default function Bookings() {
                   <div style={styles.meta}>
                     📅 {b.trip?.departure_time ? new Date(b.trip.departure_time).toLocaleString() : '—'}
                   </div>
-                  <div style={styles.meta}>🚌 Bus: {b.bus_number || b.trip?.bus_number || '—'}</div>
+                  <div style={styles.meta}>🚍 Bus: {b.bus_number || b.trip?.bus_number || '—'}</div>
                   <div style={styles.meta}>
                     💰 Fare: ৳ {Number(b.fare_amount || b.route?.single_trip_fare || 0).toFixed(2)}
                     {b.penalty_amount > 0 && <span style={{ color: '#E65100' }}> · Penalty: ৳ {Number(b.penalty_amount).toFixed(2)}</span>}
@@ -237,7 +237,7 @@ export default function Bookings() {
                       onClick={() => window.location.href = `#/trips/${b.trip_id}/modify`}
                       style={styles.modifyBtn}
                     >
-                      🛠️ Modify Trip
+                      🔧 Modify Trip
                     </button>
                   )}
                 </div>

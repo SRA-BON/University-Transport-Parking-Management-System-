@@ -1,6 +1,7 @@
 const Wallet          = require('../models/Wallet');
 const PendingPayment  = require('../models/PendingPayment');
 const SSLCommerzService = require('../services/sslcommerzService');
+const NotificationService = require('../services/NotificationService');
 const User            = require('../models/User');
 const pool            = require('../config/db');
 const crypto          = require('crypto');
@@ -222,6 +223,10 @@ exports.handlePaymentSuccess = async (req, res) => {
     const description = `SSLCommerz recharge ৳${expectedAmount} (Bank TxID: ${bankTranId})`;
     await Wallet.updateBalance(pendingPayment.user_id, expectedAmount, description);
 
+    // Notify user of successful payment
+    NotificationService.notifyPaymentSuccess(pendingPayment.user_id, expectedAmount)
+      .catch(err => console.error('Failed to notify payment success:', err));
+
     return res.redirect(
       `${process.env.FRONTEND_URL || 'http://localhost:5174'}/?payment=success&amount=${expectedAmount}`
     );
@@ -410,6 +415,10 @@ exports.handleIPN = async (req, res) => {
 
     const description = `SSLCommerz ৳${validatedAmount} via ${cardType} (Bank: ${bankTranId}, Date: ${ipnData.tran_date})`;
     await Wallet.updateBalance(pendingPayment.user_id, validatedAmount, description);
+
+    // Notify the user asynchronously
+    NotificationService.notifyPaymentSuccess(pendingPayment.user_id, validatedAmount)
+      .catch(err => console.error('Failed to notify payment success:', err));
 
     console.log(`[IPN] 💰 Credited ৳${validatedAmount} to user ${pendingPayment.user_id}`);
 

@@ -27,6 +27,7 @@ export default function Layout() {
   // Mobile navigation state
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -59,6 +60,7 @@ export default function Layout() {
 
   const isSuperAdminOrManager = ['super_admin', 'developer', 'manager'].includes(user?.role || '');
   const isParkingStaff = isSuperAdminOrManager || user?.role === 'parking_attendant' || user?.role === 'bus_attendant';
+  const showStudentFeatures = !['manager', 'bus_attendant', 'parking_attendant', 'admin', 'super_admin', 'developer'].includes(user?.role || '');
 
   const sidebarElement = (
     <aside style={{
@@ -102,29 +104,29 @@ export default function Layout() {
       </div>
 
       <nav style={styles.nav}>
-        <NavLink to="/" end style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🏠 Dashboard</NavLink>
-        {!isParkingStaff && (
+        <NavLink to="/" end className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🏠 Dashboard</NavLink>
+        {showStudentFeatures && (
           <>
-            <NavLink to="/explore" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🚌 Find a Bus</NavLink>
-            <NavLink to="/bookings" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🎫 My Bookings</NavLink>
-            <NavLink to="/parking" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🅿️ Parking Info</NavLink>
-            <NavLink to="/recharge" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>💳 Recharge Wallet</NavLink>
+            <NavLink to="/explore" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🚍 Find a Bus</NavLink>
+            <NavLink to="/bookings" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🎫 My Bookings</NavLink>
+            <NavLink to="/parking" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🏛️ Parking Info</NavLink>
+            <NavLink to="/recharge" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>💳 Recharge Wallet</NavLink>
           </>
         )}
 
         {isParkingStaff && (
-          <NavLink to="/explore" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🚌 Trip Controller</NavLink>
+          <NavLink to="/explore" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🚍 Trip Controller</NavLink>
         )}
         
         {isSuperAdminOrManager && (
-          <NavLink to="/admin" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>📋 Admin Panel</NavLink>
+          <NavLink to="/admin" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>📋 Admin Panel</NavLink>
         )}
         
         {isParkingStaff && (
-          <NavLink to="/parking-controller" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🎛️ Parking Controller</NavLink>
+          <NavLink to="/parking-controller" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>⚙️ Parking Controller</NavLink>
         )}
 
-        <NavLink to="/profile" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>👤 Profile</NavLink>
+        <NavLink to="/profile" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>👤 Profile</NavLink>
       </nav>
 
       {/* Theme Toggle Button */}
@@ -163,12 +165,28 @@ export default function Layout() {
             ☰
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 20 }}>🚌</span>
+            <span style={{ fontSize: 20 }}>🚍</span>
             <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>BRACU Transport</span>
           </div>
-          <button onClick={toggleThemeActual} style={styles.mobileThemeBtn}>
-            {theme === 'light' ? '🌙' : '☀️'}
-          </button>
+          <div style={{ position: 'relative' }}>
+            <button 
+              onClick={() => setIsSettingsOpen(!isSettingsOpen)} 
+              style={{
+                ...styles.mobileThemeBtn,
+                transform: isSettingsOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)'
+              }}
+            >
+              ⚙️
+            </button>
+            {isSettingsOpen && (
+              <div style={styles.mobileSettingsDropdown}>
+                <button className="dropdown-item" style={styles.dropdownBtn} onClick={() => { setIsSettingsOpen(false); navigate('/'); }}>🏠 Dashboard</button>
+                <button className="dropdown-item" style={styles.dropdownBtn} onClick={() => { setIsSettingsOpen(false); toggleThemeActual(); }}>{theme === 'light' ? '🌙 Dark Mode' : '☀️ Light Mode'}</button>
+                <button className="dropdown-item" style={{...styles.dropdownBtn, color: '#e74c3c'}} onClick={() => { setIsSettingsOpen(false); handleLogout(); }}>⏻ Logout</button>
+              </div>
+            )}
+          </div>
         </header>
       )}
 
@@ -319,10 +337,11 @@ const styles: Record<string, React.CSSProperties> = {
   main: {
     flex: 1,
     padding: '32px 40px',
-    maxWidth: 1400,
-    margin: '0 auto',
     width: '100%',
+    minWidth: 0,
     boxSizing: 'border-box',
+    background: 'var(--bg-primary)',
+    overflow: 'hidden',
   },
   mobileHeader: {
     display: 'flex',
@@ -342,6 +361,35 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     color: 'var(--text-primary)',
     padding: 4,
+  },
+  mobileSettingsDropdown: {
+    position: 'absolute',
+    top: '120%',
+    right: 0,
+    background: 'var(--bg-card)',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+    borderRadius: 8,
+    border: '1px solid var(--border-color)',
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 160,
+    zIndex: 2000,
+    padding: 8,
+    gap: 4
+  },
+  dropdownBtn: {
+    background: 'transparent',
+    border: 'none',
+    textAlign: 'left',
+    padding: '10px 12px',
+    borderRadius: 6,
+    fontSize: 14,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8
   },
   mobileThemeBtn: {
     background: 'none',

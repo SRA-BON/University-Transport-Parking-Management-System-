@@ -1,11 +1,12 @@
--- Full Clean Database Script for Supabase
+-- University Transport & Parking Management System
+-- Full Database Setup Script for Supabase
+-- Safe to run multiple times: uses IF NOT EXISTS and ON CONFLICT everywhere.
 
--- 1. Wipe existing schema to start fresh
-DROP SCHEMA IF EXISTS public CASCADE;
-CREATE SCHEMA public;
 
--- 2. Users Table
-CREATE TABLE users (
+-- TABLES
+
+-- 1. Users
+CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     student_id VARCHAR(50) UNIQUE,
@@ -21,8 +22,8 @@ CREATE TABLE users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Wallets Table
-CREATE TABLE wallets (
+-- 2. Wallets
+CREATE TABLE IF NOT EXISTS wallets (
     id SERIAL PRIMARY KEY,
     user_id INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     balance DECIMAL(10, 2) DEFAULT 0.00 CHECK (balance >= 0),
@@ -30,8 +31,8 @@ CREATE TABLE wallets (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 4. Routes Table
-CREATE TABLE routes (
+-- 3. Routes
+CREATE TABLE IF NOT EXISTS routes (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     direction VARCHAR(20) NOT NULL CHECK (direction IN ('inbound', 'outbound')),
@@ -45,8 +46,8 @@ CREATE TABLE routes (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 5. Route Stoppages Table
-CREATE TABLE route_stoppages (
+-- 4. Route Stoppages
+CREATE TABLE IF NOT EXISTS route_stoppages (
     id SERIAL PRIMARY KEY,
     route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
     name VARCHAR(200) NOT NULL,
@@ -54,8 +55,8 @@ CREATE TABLE route_stoppages (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 6. Buses Table
-CREATE TABLE buses (
+-- 5. Buses
+CREATE TABLE IF NOT EXISTS buses (
     id SERIAL PRIMARY KEY,
     bus_number VARCHAR(50) UNIQUE NOT NULL,
     capacity INTEGER NOT NULL DEFAULT 40,
@@ -64,8 +65,8 @@ CREATE TABLE buses (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 7. Trips Table
-CREATE TABLE trips (
+-- 6. Trips
+CREATE TABLE IF NOT EXISTS trips (
     id SERIAL PRIMARY KEY,
     bus_id INTEGER NOT NULL REFERENCES buses(id) ON DELETE CASCADE,
     route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
@@ -79,8 +80,8 @@ CREATE TABLE trips (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 8. Trip Stoppage Times Table
-CREATE TABLE trip_stoppage_times (
+-- 7. Trip Stoppage Times
+CREATE TABLE IF NOT EXISTS trip_stoppage_times (
     id SERIAL PRIMARY KEY,
     trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
     stoppage_id INTEGER NOT NULL REFERENCES route_stoppages(id) ON DELETE CASCADE,
@@ -88,8 +89,8 @@ CREATE TABLE trip_stoppage_times (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 9. Bookings Table
-CREATE TABLE bookings (
+-- 8. Bookings
+CREATE TABLE IF NOT EXISTS bookings (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
@@ -111,11 +112,8 @@ CREATE TABLE bookings (
     UNIQUE(trip_id, seat_number) DEFERRABLE INITIALLY DEFERRED
 );
 
-CREATE INDEX idx_bookings_user_active ON bookings(user_id) WHERE status IN ('confirmed', 'checked_in');
-CREATE INDEX idx_bookings_trip_status ON bookings(trip_id, status);
-
--- 10. Transactions Table
-CREATE TABLE transactions (
+-- 9. Transactions
+CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
     wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
     amount DECIMAL(10, 2) NOT NULL,
@@ -125,16 +123,16 @@ CREATE TABLE transactions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 11. Check-ins Table
-CREATE TABLE check_ins (
+-- 10. Check-ins
+CREATE TABLE IF NOT EXISTS check_ins (
     id SERIAL PRIMARY KEY,
     booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
     checked_in_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     checked_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 12. Vehicles Table (replaces parking_profiles, supports multiple vehicles per user)
-CREATE TABLE vehicles (
+-- 11. Vehicles
+CREATE TABLE IF NOT EXISTS vehicles (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     district VARCHAR(100) NOT NULL,
@@ -146,11 +144,8 @@ CREATE TABLE vehicles (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_vehicles_user ON vehicles(user_id);
-CREATE UNIQUE INDEX idx_vehicles_unique_reg ON vehicles(vehicle_reg_no);
-
--- 13. Parking Sessions Table
-CREATE TABLE parking_sessions (
+-- 12. Parking Sessions
+CREATE TABLE IF NOT EXISTS parking_sessions (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
@@ -165,8 +160,8 @@ CREATE TABLE parking_sessions (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 14. Parking Capacity Table
-CREATE TABLE parking_capacity (
+-- 13. Parking Capacity
+CREATE TABLE IF NOT EXISTS parking_capacity (
     id SERIAL PRIMARY KEY,
     car_total_spots INTEGER NOT NULL DEFAULT 200,
     car_occupied_spots INTEGER NOT NULL DEFAULT 0,
@@ -175,15 +170,15 @@ CREATE TABLE parking_capacity (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 15. Parking Fees Table
-CREATE TABLE parking_fees (
+-- 14. Parking Fees
+CREATE TABLE IF NOT EXISTS parking_fees (
     id SERIAL PRIMARY KEY,
     fixed_fee DECIMAL(10,2) NOT NULL DEFAULT 30.00,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 16. Pending Payments Table
-CREATE TABLE pending_payments (
+-- 15. Pending Payments
+CREATE TABLE IF NOT EXISTS pending_payments (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     transaction_id VARCHAR(255) UNIQUE NOT NULL,
@@ -194,14 +189,7 @@ CREATE TABLE pending_payments (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Indexes for better performance
-CREATE INDEX idx_users_rfid_id ON users(rfid_id);
-CREATE INDEX idx_trips_route_departure ON trips(route_id, departure_time);
-CREATE INDEX idx_bookings_user_trip ON bookings(user_id, trip_id);
-CREATE INDEX idx_bookings_trip ON bookings(trip_id);
-CREATE INDEX idx_parking_sessions_user ON parking_sessions(user_id);
-CREATE INDEX idx_parking_sessions_status ON parking_sessions(status);
-
+-- 16. Password Resets
 CREATE TABLE IF NOT EXISTS password_resets (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -211,7 +199,45 @@ CREATE TABLE IF NOT EXISTS password_resets (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Triggers and Functions
+-- 17. FCM Tokens
+CREATE TABLE IF NOT EXISTS fcm_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_token VARCHAR(255) UNIQUE NOT NULL,
+    device_type VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 18. User Frequent Routes
+CREATE TABLE IF NOT EXISTS user_frequent_routes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+    booking_count INTEGER DEFAULT 1,
+    last_booked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, route_id)
+);
+
+
+-- INDEXES
+
+CREATE INDEX IF NOT EXISTS idx_users_rfid_id ON users(rfid_id);
+CREATE INDEX IF NOT EXISTS idx_trips_route_departure ON trips(route_id, departure_time);
+CREATE INDEX IF NOT EXISTS idx_bookings_user_active ON bookings(user_id) WHERE status IN ('confirmed', 'checked_in');
+CREATE INDEX IF NOT EXISTS idx_bookings_trip_status ON bookings(trip_id, status);
+CREATE INDEX IF NOT EXISTS idx_bookings_user_trip ON bookings(user_id, trip_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_trip ON bookings(trip_id);
+CREATE INDEX IF NOT EXISTS idx_vehicles_user ON vehicles(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicles_unique_reg ON vehicles(vehicle_reg_no);
+CREATE INDEX IF NOT EXISTS idx_parking_sessions_user ON parking_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_parking_sessions_status ON parking_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_fcm_tokens_user ON fcm_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_frequent_routes_user ON user_frequent_routes(user_id);
+
+
+-- FUNCTIONS
+
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -230,92 +256,111 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+
+-- TRIGGERS (safe to re-run: drop-trigger-then-recreate)
+
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_wallets_updated_at ON wallets;
 CREATE TRIGGER update_wallets_updated_at BEFORE UPDATE ON wallets FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_trips_updated_at ON trips;
 CREATE TRIGGER update_trips_updated_at BEFORE UPDATE ON trips FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_vehicles_updated_at ON vehicles;
 CREATE TRIGGER update_vehicles_updated_at BEFORE UPDATE ON vehicles FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS vehicles_set_default ON vehicles;
 CREATE TRIGGER vehicles_set_default BEFORE INSERT ON vehicles FOR EACH ROW EXECUTE FUNCTION set_default_vehicle_on_first();
+
+DROP TRIGGER IF EXISTS update_parking_sessions_updated_at ON parking_sessions;
 CREATE TRIGGER update_parking_sessions_updated_at BEFORE UPDATE ON parking_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_parking_capacity_updated_at ON parking_capacity;
 CREATE TRIGGER update_parking_capacity_updated_at BEFORE UPDATE ON parking_capacity FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_pending_payments_updated_at ON pending_payments;
 CREATE TRIGGER update_pending_payments_updated_at BEFORE UPDATE ON pending_payments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--------------------------------------------------------------------------------------------------
--- SEED DATA
--------------------------------------------------------------------------------------------------
 
--- 1. Insert Default Developer User
-DO $$
-DECLARE
-    new_user_id INTEGER;
-BEGIN
-    INSERT INTO users (name, student_id, email, password_hash, role, is_active) 
-    VALUES (
-        'admin', 
-        'ADMIN', 
-        'admin@gmail.com', 
-        '$2b$10$Z8elUYYxqhtX6YZ4kgCmBewVA3eq5PywEkpfLhB0qB5xxa6bcH0CO', 
-        'super_admin', 
-        TRUE
-    ) RETURNING id INTO new_user_id;
-    INSERT INTO wallets (user_id, balance) VALUES (new_user_id, 0);
-END $$;
+-- SEED DATA (all inserts use ON CONFLICT DO NOTHING - safe to re-run)
 
--- 2. Parking Settings
-INSERT INTO parking_capacity (car_total_spots, car_occupied_spots, bike_total_spots, bike_occupied_spots) VALUES (200, 0, 400, 0);
-INSERT INTO parking_fees (fixed_fee) VALUES (30.00);
+-- Admin user (password: admin123)
+INSERT INTO users (name, student_id, email, password_hash, role, is_active)
+VALUES ('admin', 'ADMIN', 'admin@gmail.com', '$2b$10$Z8elUYYxqhtX6YZ4kgCmBewVA3eq5PywEkpfLhB0qB5xxa6bcH0CO', 'super_admin', TRUE)
+ON CONFLICT (email) DO NOTHING;
 
--- 3. Insert Buses
+INSERT INTO wallets (user_id, balance)
+SELECT id, 0 FROM users WHERE email = 'admin@gmail.com'
+ON CONFLICT (user_id) DO NOTHING;
+
+-- Parking settings
+INSERT INTO parking_capacity (car_total_spots, car_occupied_spots, bike_total_spots, bike_occupied_spots)
+SELECT 200, 0, 400, 0
+WHERE NOT EXISTS (SELECT 1 FROM parking_capacity);
+
+INSERT INTO parking_fees (fixed_fee)
+SELECT 30.00
+WHERE NOT EXISTS (SELECT 1 FROM parking_fees);
+
+-- Buses
 INSERT INTO buses (bus_number, capacity, standby_capacity) VALUES
 ('BUS-01', 40, 10), ('BUS-02', 40, 10), ('BUS-03', 40, 10),
 ('BUS-04', 40, 10), ('BUS-05', 40, 10), ('BUS-06', 40, 10),
 ('BUS-07', 40, 10), ('BUS-08', 40, 10), ('BUS-09', 40, 10),
-('BUS-10', 40, 10), ('BUS-11', 40, 10), ('BUS-12', 40, 10);
+('BUS-10', 40, 10), ('BUS-11', 40, 10), ('BUS-12', 40, 10)
+ON CONFLICT (bus_number) DO NOTHING;
 
--- 4. Insert Routes (Outbound as requested)
+-- Routes
 INSERT INTO routes (name, direction, classification, single_trip_fare, round_trip_fare, booking_window_minutes, free_cancel_minutes, emergency_cancel_penalty, no_show_grace_minutes) VALUES
-('Abdullahpur-A (Route 01)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Abdullahpur-B (Route 01)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Mirpur-A (Route 02)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Mirpur-B (Route 02)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Jigatola-A (Route 03)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Jigatola-B (Route 03)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Azimpur (Route 04)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Baldha Garden (Route 05)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Mohammadpur-A (Route 06)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Mohammadpur-B (Route 06)', 'outbound', 'standard', 110.00, 220.00, 180, 60, 50.00, 5),
-('Narayanganj (Route 07)', 'outbound', 'narayanganj', 160.00, 320.00, 180, 60, 50.00, 5),
-('Bashundhara (Route 08)', 'outbound', 'bashundhara', 50.00, 100.00, 180, 60, 50.00, 5);
+('Abdullahpur-A (Route 01)', 'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Abdullahpur-B (Route 01)', 'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Mirpur-A (Route 02)',      'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Mirpur-B (Route 02)',      'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Jigatola-A (Route 03)',    'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Jigatola-B (Route 03)',    'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Azimpur (Route 04)',       'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Baldha Garden (Route 05)', 'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Mohammadpur-A (Route 06)', 'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Mohammadpur-B (Route 06)', 'outbound', 'standard',    110.00, 220.00, 180, 60, 50.00, 5),
+('Narayanganj (Route 07)',   'outbound', 'narayanganj', 160.00, 320.00, 180, 60, 50.00, 5),
+('Bashundhara (Route 08)',   'outbound', 'bashundhara',  50.00, 100.00, 180, 60, 50.00, 5)
+ON CONFLICT DO NOTHING;
 
--- 5. Insert Trips based on requested timing
--- We will use CURRENT_DATE as the base for the times so they appear today.
+-- Trips (only seed if trips table is empty)
 DO $$
 DECLARE
     today DATE := CURRENT_DATE;
 BEGIN
-    -- 1st Outbound Timing (Drop off) - 2:05 PM / 2:10 PM
-    INSERT INTO trips (bus_id, route_id, departure_time, available_seats, available_standby, status) VALUES
-    (1, 1, today + INTERVAL '14 hours 5 minutes', 40, 10, 'scheduled'), -- Abdullahpur-A (2:05 PM)
-    (2, 3, today + INTERVAL '14 hours 5 minutes', 40, 10, 'scheduled'), -- Mirpur-A (2:05 PM)
-    (3, 4, today + INTERVAL '14 hours 5 minutes', 40, 10, 'scheduled'), -- Mirpur-B (2:05 PM)
-    (4, 5, today + INTERVAL '14 hours 5 minutes', 40, 10, 'scheduled'), -- Jigatola-A (2:05 PM)
-    (5, 7, today + INTERVAL '14 hours 5 minutes', 40, 10, 'scheduled'), -- Azimpur (2:05 PM)
-    (6, 8, today + INTERVAL '14 hours 10 minutes', 40, 10, 'scheduled'), -- Baldha Garden (2:10 PM)
-    (7, 9, today + INTERVAL '14 hours 10 minutes', 40, 10, 'scheduled'), -- Mohammadpur-A (2:10 PM)
-    (8, 10, today + INTERVAL '14 hours 5 minutes', 40, 10, 'scheduled'), -- Mohammadpur-B (2:05 PM)
-    (9, 12, today + INTERVAL '14 hours 5 minutes', 40, 10, 'scheduled'); -- Bashundhara (2:05 PM)
+    IF (SELECT COUNT(*) FROM trips) = 0 THEN
 
-    -- 2nd Outbound Timing (Drop off) - 5:10 PM / 5:15 PM
-    INSERT INTO trips (bus_id, route_id, departure_time, available_seats, available_standby, status) VALUES
-    (10, 1, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'), -- Abdullahpur-A (5:10 PM)
-    (11, 2, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'), -- Abdullahpur-B (5:15 PM)
-    (12, 3, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'), -- Mirpur-A (5:10 PM)
-    (1, 4, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'), -- Mirpur-B (5:10 PM)
-    (2, 5, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'), -- Jigatola-A (5:10 PM)
-    (3, 6, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'), -- Jigatola-B (5:15 PM)
-    (4, 7, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'), -- Azimpur (5:10 PM)
-    (5, 8, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'), -- Baldha Garden (5:15 PM)
-    (6, 9, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'), -- Mohammadpur-A (5:10 PM)
-    (7, 10, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'), -- Mohammadpur-B (5:15 PM)
-    (8, 11, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'), -- Narayanganj (5:15 PM)
-    (9, 12, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'); -- Bashundhara (5:10 PM)
+        -- Batch 1: 2:05 PM and 2:10 PM departures
+        INSERT INTO trips (bus_id, route_id, departure_time, available_seats, available_standby, status) VALUES
+        (1,  1,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
+        (2,  3,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
+        (3,  4,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
+        (4,  5,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
+        (5,  7,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
+        (6,  8,  today + INTERVAL '14 hours 10 minutes', 40, 10, 'scheduled'),
+        (7,  9,  today + INTERVAL '14 hours 10 minutes', 40, 10, 'scheduled'),
+        (8,  10, today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
+        (9,  12, today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled');
+
+        -- Batch 2: 5:10 PM and 5:15 PM departures
+        INSERT INTO trips (bus_id, route_id, departure_time, available_seats, available_standby, status) VALUES
+        (10, 1,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
+        (11, 2,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
+        (12, 3,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
+        (1,  4,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
+        (2,  5,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
+        (3,  6,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
+        (4,  7,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
+        (5,  8,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
+        (6,  9,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
+        (7,  10, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
+        (8,  11, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
+        (9,  12, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled');
+
+    END IF;
 END $$;

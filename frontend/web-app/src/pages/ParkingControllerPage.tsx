@@ -1,11 +1,45 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState, useCallback } from 'react';
 import api from '../services/api';
+import { useRFIDScanner } from '../hooks/useRFIDScanner';
+import { syncService } from '../services/SyncService';
+import { useOfflineSync } from '../hooks/useOfflineSync';
 
 export default function ParkingControllerPage() {
   const [capacity, setCapacity] = useState<any>(null);
   const [activeSessions, setActiveSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [scanMode, setScanMode] = useState<'entry' | 'exit'>('entry');
+  const [scanMessage, setScanMessage] = useState<{type: 'success' | 'error' | 'warning', text: string} | null>(null);
+
+  const { isOnline, pendingCount } = useOfflineSync();
+
+  const handleScan = useCallback(async (rfid: string) => {
+    try {
+      setScanMessage(null);
+      if (!navigator.onLine) {
+        throw new Error('OFFLINE_CACHE');
+      }
+
+      const endpoint = scanMode === 'entry' ? '/rfid/parking/entry' : '/rfid/parking/exit';
+      const res = await api.post(endpoint, { rfid_id: rfid });
+      
+      setScanMessage({ type: 'success', text: `${scanMode === 'entry' ? 'Entry' : 'Exit'} successful for ${res.data.student.name}!` });
+      loadData(); // Refresh table
+    } catch (err: any) {
+      if (err.message === 'OFFLINE_CACHE' || err.code === 'ERR_NETWORK' || !err.response) {
+        syncService.addScan({ type: scanMode === 'entry' ? 'parking_entry' : 'parking_exit', rfid_id: rfid });
+        setScanMessage({ type: 'warning', text: `Device Offline. ${scanMode === 'entry' ? 'Entry' : 'Exit'} saved locally and will sync when online.` });
+      } else {
+        setScanMessage({ type: 'error', text: err.response?.data?.error || `Failed to process ${scanMode} scan` });
+      }
+    }
+    
+    // Clear message after 4 seconds
+    setTimeout(() => setScanMessage(null), 4000);
+  }, [scanMode]);
+
+  useRFIDScanner(handleScan);
 
   const loadData = async () => {
     setLoading(true);
@@ -34,11 +68,47 @@ export default function ParkingControllerPage() {
     <div className="app-page">
       <div style={styles.header}>
         <div>
-          <h2 style={styles.heading}>🎛️ Basement Parking Controller</h2>
+          <h2 style={styles.heading}>⚙️ Basement Parking Controller</h2>
           <p style={styles.sub}>Real-time Occupancy & Monitoring</p>
+          {!isOnline && (
+            <div style={{ marginTop: 8, display: 'inline-block', padding: '4px 8px', background: '#FF9800', color: 'white', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
+              📶 OFFLINE - {pendingCount} scans pending sync
+            </div>
+          )}
         </div>
-        <button onClick={loadData} style={styles.refreshBtn}>🔄 Refresh</button>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', background: 'var(--bg-input)', borderRadius: '8px', padding: '4px' }}>
+            <button 
+              onClick={() => setScanMode('entry')}
+              style={{ ...styles.modeBtn, background: scanMode === 'entry' ? '#2E7D32' : 'transparent', color: scanMode === 'entry' ? 'white' : 'var(--text-primary)' }}
+            >
+              Entry Mode
+            </button>
+            <button 
+              onClick={() => setScanMode('exit')}
+              style={{ ...styles.modeBtn, background: scanMode === 'exit' ? '#D32F2F' : 'transparent', color: scanMode === 'exit' ? 'white' : 'var(--text-primary)' }}
+            >
+              Exit Mode
+            </button>
+          </div>
+          <button onClick={loadData} style={styles.refreshBtn}>🔄 Refresh</button>
+        </div>
       </div>
+
+      {scanMessage && (
+        <div style={{
+          padding: '12px 16px',
+          marginBottom: '16px',
+          borderRadius: '8px',
+          background: scanMessage.type === 'success' ? '#E8F5E9' : scanMessage.type === 'warning' ? '#FFF3E0' : '#FFEBEE',
+          color: scanMessage.type === 'success' ? '#2E7D32' : scanMessage.type === 'warning' ? '#E65100' : '#C62828',
+          border: `1px solid ${scanMessage.type === 'success' ? '#A5D6A7' : scanMessage.type === 'warning' ? '#FFCC80' : '#EF9A9A'}`,
+          fontWeight: 600
+        }}>
+          {scanMessage.type === 'success' ? '✅ ' : scanMessage.type === 'warning' ? '⚠️ ' : '❌ '}
+          {scanMessage.text}
+        </div>
+      )}
 
       {loading && !capacity ? (
         <div className="loading-spinner dark" style={{ marginTop: 16 }} />
@@ -159,6 +229,14 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     cursor: 'pointer',
     fontWeight: 600,
+  },
+  modeBtn: {
+    padding: '8px 16px',
+    borderRadius: '6px',
+    border: 'none',
+    cursor: 'pointer',
+    fontWeight: 600,
+    transition: 'all 0.2s',
   },
   statsGrid: {
     display: 'grid',

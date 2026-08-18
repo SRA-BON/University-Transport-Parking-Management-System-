@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const AuthController = require('../controllers/AuthController');
+const NotificationService = require('../services/NotificationService');
 const authMiddleware = require('../middleware/authMiddleware');
 
 // Public routes
@@ -15,5 +16,17 @@ router.post('/reset-password', AuthController.resetPassword);
 router.use(authMiddleware);
 router.get('/profile', AuthController.getProfile);
 router.put('/profile', AuthController.updateProfile);
+
+router.post('/fcm-token', async (req, res) => {
+  try {
+    const { token, device_type } = req.body;
+    if (!token) return res.status(400).json({ error: 'Token required' });
+    await NotificationService.registerToken(req.user.id, token, device_type);
+    res.json({ message: 'FCM token registered' });
+  } catch (error) {
+    console.error('FCM Token Save Error:', error);
+    res.status(500).json({ error: 'Failed to save token' });
+  }
+});
 
 module.exports = router;

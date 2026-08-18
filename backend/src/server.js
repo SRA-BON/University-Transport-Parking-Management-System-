@@ -3,6 +3,7 @@ const cors = require('cors');
 require('dotenv').config();
 const pool = require('./config/db');
 const { connectRedis } = require('./config/redis');
+const { scheduleDailyNotifications } = require('./workers/NotificationWorker');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -120,6 +121,10 @@ const startServer = async () => {
       console.log(`Server running on port ${PORT}`);
       startNoShowSweep();
     });
+
+    // Start background workers
+    scheduleDailyNotifications().catch(err => console.error('Failed to schedule daily notifications:', err));
+    
   } catch (err) {
     console.error('Failed to start server:', err);
     process.exit(1);

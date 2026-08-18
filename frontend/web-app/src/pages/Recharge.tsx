@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import api from '../services/api';
 
 export default function Recharge() {
@@ -82,7 +82,7 @@ export default function Recharge() {
           ) : (
             <>
               <div style={styles.balanceAmount}>৳ {balance.toFixed(2)}</div>
-              <div style={styles.balanceHint}>Enough for {Math.floor(balance / 40)} standard single trips 🚌</div>
+              <div style={styles.balanceHint}>Enough for {Math.floor(balance / 40)} standard single trips 🚍</div>
             </>
           )}
         </div>

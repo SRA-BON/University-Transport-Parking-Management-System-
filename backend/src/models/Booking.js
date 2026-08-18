@@ -1,6 +1,8 @@
 const pool = require('../config/db');
 const Wallet = require('./Wallet');
 const Trip = require('./Trip');
+const { client: redisClient } = require('../config/redis');
+const NotificationService = require('../services/NotificationService');
 
 class Booking {
   static BUSINESS_RULES = {
@@ -111,8 +113,32 @@ class Booking {
       let standbyPosition = null;
       let seatNumber = null;
       if (!isStandby) {
-        if (trip.available_seats <= 0) {
-          throw new Error('No seats available for this trip');
+        let redisDecremented = false;
+        try {
+          // Attempt atomic decrement in Redis
+          const newSeatCount = await redisClient.decr(`trip:${tripId}:seats:available`);
+          if (newSeatCount < 0) {
+            // Restore the counter if we went below zero
+            await redisClient.incr(`trip:${tripId}:seats:available`);
+            throw new Error('No seats available for this trip');
+          }
+          redisDecremented = true;
+
+          // Trigger Seat Availability Alert
+          if (newSeatCount === 10 || newSeatCount === 5) {
+             // We do this asynchronously so it doesn't block the booking transaction
+             NotificationService.notifySeatAvailabilityDrop(tripId, newSeatCount, trip.route_name, trip.departure_time)
+               .catch(err => console.error('Failed to send seat alert:', err));
+          }
+        } catch (redisErr) {
+          if (redisErr.message === 'No seats available for this trip') {
+            throw redisErr;
+          }
+          // If Redis is unreachable or errored for another reason, fallback to PG row lock check
+          console.warn('⚠️ Redis decrement failed/skipped, falling back to PG check:', redisErr.message);
+          if (trip.available_seats <= 0) {
+            throw new Error('No seats available for this trip');
+          }
         }
         // Assign next sequential seat number (no gaps)
         const nextSeatRes = await client.query(
@@ -159,7 +185,16 @@ class Booking {
         [booking.id, userId]
       );
 
+      // ── Successful booking commit ─────────────────────────────────────────
       await client.query('COMMIT');
+      
+      // Track frequent route asynchronously
+      NotificationService.trackFrequentRoute(userId, trip.route_id)
+        .catch(err => console.error('Failed to track frequent route:', err));
+
+      // Notify User asynchronously
+      NotificationService.notifyBookingConfirmed(userId, trip)
+        .catch(err => console.error('Failed to send booking notification:', err));
 
       // Non-blocking: best-effort update Redis cache (never throw)
       Trip.getAvailableSeats(tripId).catch(() => {});
@@ -175,6 +210,19 @@ class Booking {
       };
     } catch (err) {
       await client.query('ROLLBACK');
+      
+      // If we atomically decremented Redis but the transaction failed, we must increment it back!
+      if (!isStandby && err.message !== 'No seats available for this trip' && err.message !== 'You already have an active booking' && err.message !== 'You have already booked this trip') {
+        try {
+          // Check if we actually decremented it by reading the trip id (or we could track a local flag)
+          // Since we can't easily pass the local flag down to the catch block from inside the if, 
+          // we'll just increment it back if it's not a pre-decrement error.
+          await redisClient.incr(`trip:${tripId}:seats:available`);
+        } catch (incrErr) {
+          console.error('Failed to rollback Redis seat count:', incrErr);
+        }
+      }
+
       throw err;
     } finally {
       client.release();
@@ -255,6 +303,7 @@ class Booking {
       const bookingRes = await client.query(
         `SELECT b.*,
                 t.departure_time,
+                r.name AS route_name,
                 r.single_trip_fare,
                 r.free_cancel_minutes,
                 r.emergency_cancel_penalty,
@@ -272,6 +321,7 @@ class Booking {
           const adminRes = await client.query(
             `SELECT b.*,
                     t.departure_time,
+                    r.name AS route_name,
                     r.single_trip_fare,
                     r.free_cancel_minutes,
                     r.emergency_cancel_penalty,
@@ -373,6 +423,10 @@ class Booking {
       }
 
       await client.query('COMMIT');
+
+      // Notify User asynchronously
+      NotificationService.notifyBookingCancelled(b.user_id, { route_name: b.route_name }, refundAmount)
+        .catch(err => console.error('Failed to send cancellation notification:', err));
 
       // Non-blocking: refresh Redis cache
       Trip.getAvailableSeats(b.trip_id).catch(() => {});

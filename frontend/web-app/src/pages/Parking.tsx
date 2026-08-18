@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+﻿import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
@@ -77,7 +77,7 @@ export default function Parking() {
     <div className="app-page">
       <header style={styles.headerRow}>
         <div>
-          <h2 style={styles.heading}>🅿️ Parking Dashboard</h2>
+          <h2 style={styles.heading}>🏛️ Parking Dashboard</h2>
           <p style={styles.subHeading}>
             Manage parking, view sessions & track your activity
           </p>

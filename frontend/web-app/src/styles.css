@@ -87,8 +87,113 @@ button:focus {
   outline: none;
 }
 
+/* ── Global Button & Nav Interaction Feedback ────────────────────────────────── */
+button:not(.dropdown-item), .nav-item {
+  cursor: pointer;
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.15s ease,
+              background-color 0.15s ease,
+              filter 0.15s ease,
+              opacity 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+button:hover:not(:disabled):not(.dropdown-item), .nav-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  filter: brightness(1.05); /* Slight color lighten on hover */
+}
+
+button:active:not(:disabled):not(.dropdown-item), .nav-item:active {
+  transform: scale(0.96) translateY(0px);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.10);
+  filter: brightness(0.92); /* Distinct color darken on press */
+  opacity: 0.95;
+}
+
+/* Dropdown Menu Item Animations */
+.dropdown-item {
+  transition: background-color 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  background-color: transparent;
+}
+
+.dropdown-item:hover {
+  background-color: var(--bg-hover) !important;
+  transform: scale(0.98);
+}
+
+.dropdown-item:active {
+  background-color: var(--bg-active) !important;
+  transform: scale(0.95);
+}
+
+/* Dark Mode Physics Adjustments — tints the container only, not text/icons */
+body.dark-theme button:not(.dropdown-item), 
+body.dark-theme .nav-item {
+  position: relative;
+  overflow: hidden;
+}
+
+/* White overlay pseudo-element that appears on hover */
+body.dark-theme button:not(.dropdown-item)::after,
+body.dark-theme .nav-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0);
+  transition: background 0.15s ease;
+  pointer-events: none;
+}
+
+body.dark-theme button:hover:not(:disabled):not(.dropdown-item)::after,
+body.dark-theme .nav-item:hover::after {
+  background: rgba(255, 255, 255, 0.10); /* Light white tint on container only */
+}
+
+body.dark-theme button:active:not(:disabled):not(.dropdown-item)::after,
+body.dark-theme .nav-item:active::after {
+  background: rgba(0, 0, 0, 0.18); /* Darken container on press */
+}
+
+/* Remove brightness filter in dark mode (no longer needed) */
+body.dark-theme button:hover:not(:disabled):not(.dropdown-item),
+body.dark-theme .nav-item:hover {
+  filter: none;
+  box-shadow: 0 4px 18px rgba(255, 255, 255, 0.06), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+body.dark-theme button:active:not(:disabled):not(.dropdown-item),
+body.dark-theme .nav-item:active {
+  filter: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+body.dark-theme .dropdown-item:hover {
+  background-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+body.dark-theme .dropdown-item:active {
+  background-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Touch device: stronger press feedback with noticeable color change */
+@media (hover: none) {
+  button:active:not(:disabled), .nav-item:active {
+    transform: scale(0.94);
+    filter: brightness(0.85); /* Darker on mobile hold */
+    opacity: 0.90;
+  }
+}
+
 .app-page {
-  min-height: 100vh;
+  width: 100%;
   background: var(--bg-primary);
   color: var(--text-primary);
   transition: background-color 0.2s ease, color 0.2s ease;

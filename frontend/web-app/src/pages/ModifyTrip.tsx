@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
+import { useRFIDScanner } from '../hooks/useRFIDScanner';
+import { syncService } from '../services/SyncService';
+import { useOfflineSync } from '../hooks/useOfflineSync';
 
 const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
   confirmed:   { bg: '#E8F5E9', color: '#2E7D32', label: 'Confirmed' },
@@ -15,7 +18,36 @@ export default function ModifyTrip() {
   const [loading, setLoading] = useState(true);
   const [manifest, setManifest] = useState<any>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [scanMessage, setScanMessage] = useState<{type: 'success' | 'error' | 'warning', text: string} | null>(null);
   const [filter, setFilter] = useState<'all' | 'confirmed' | 'rfid_scanned' | 'not_rfid_scanned' | 'checked_in' | 'no_show' | 'cancelled'>('all');
+  
+  const { isOnline, pendingCount } = useOfflineSync();
+
+  const handleScan = async (rfid: string) => {
+    try {
+      setScanMessage(null);
+      if (!navigator.onLine) {
+        throw new Error('OFFLINE_CACHE');
+      }
+
+      const res = await api.post('/bookings/rfid/gate-scan', { rfid_id: rfid, trip_id: tripId });
+      
+      setScanMessage({ type: 'success', text: `Scanned: ${res.data.student?.name} (${res.data.student?.student_id})` });
+      loadManifest(); // Refresh the passenger list
+    } catch (err: any) {
+      if (err.message === 'OFFLINE_CACHE' || err.code === 'ERR_NETWORK' || !err.response) {
+        syncService.addScan({ type: 'bus', rfid_id: rfid, trip_id: tripId });
+        setScanMessage({ type: 'warning', text: `Device Offline. Scan saved locally and will sync when online.` });
+      } else {
+        setScanMessage({ type: 'error', text: err.response?.data?.message || err.response?.data?.error || 'Scan Failed' });
+      }
+    }
+    
+    // Clear message after 4 seconds
+    setTimeout(() => setScanMessage(null), 4000);
+  };
+
+  useRFIDScanner(handleScan);
 
   const canManage = ['super_admin', 'manager', 'developer', 'admin', 'bus_attendant'].some(
     (r) => (window as any).__AUTH_ROLE === r ||
@@ -135,10 +167,15 @@ export default function ModifyTrip() {
       <div style={styles.header}>
         <div>
           <Link to="/explore" style={{ color: '#6C63FF', fontWeight: 700, textDecoration: 'none' }}>← Back to Trips</Link>
-          <h2 style={styles.heading}>🛠️ Modify Trip #{tripId}</h2>
+          <h2 style={styles.heading}>🔧 Modify Trip #{tripId}</h2>
           <p style={styles.sub}>
-            {trip.route_name} · 🚌 {trip.bus_number} · 🕒 {new Date(trip.departure_time).toLocaleString()}
+            {trip.route_name} · 🚍 {trip.bus_number} · 🕒 {new Date(trip.departure_time).toLocaleString()}
           </p>
+          {!isOnline && (
+            <div style={{ marginTop: 8, display: 'inline-block', padding: '4px 8px', background: '#FF9800', color: 'white', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
+              📶 OFFLINE - {pendingCount} scans pending sync
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -160,6 +197,21 @@ export default function ModifyTrip() {
           )}
         </div>
       </div>
+
+      {scanMessage && (
+        <div style={{
+          padding: '12px 16px',
+          marginBottom: '16px',
+          borderRadius: '8px',
+          background: scanMessage.type === 'success' ? '#E8F5E9' : scanMessage.type === 'warning' ? '#FFF3E0' : '#FFEBEE',
+          color: scanMessage.type === 'success' ? '#2E7D32' : scanMessage.type === 'warning' ? '#E65100' : '#C62828',
+          border: `1px solid ${scanMessage.type === 'success' ? '#A5D6A7' : scanMessage.type === 'warning' ? '#FFCC80' : '#EF9A9A'}`,
+          fontWeight: 600
+        }}>
+          {scanMessage.type === 'success' ? '✅ ' : scanMessage.type === 'warning' ? '⚠️ ' : '❌ '}
+          {scanMessage.text}
+        </div>
+      )}
 
       {/* ── Trip Info + Stats ── */}
       <div style={styles.infoGrid}>

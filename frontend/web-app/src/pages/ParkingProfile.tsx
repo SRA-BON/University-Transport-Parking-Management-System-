@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
@@ -405,7 +405,7 @@ export default function ParkingProfile() {
                 ok={!!defaultVehicle}
               />
               <StatusItem
-                icon="🅿️"
+                icon="🏛️"
                 label="Active Session"
                 value={activeSession ? `Token #${activeSession.digital_token}` : 'None'}
                 ok={!!activeSession}

@@ -15,11 +15,19 @@ import AdminDashboard from './pages/AdminDashboard';
 import ParkingControllerPage from './pages/ParkingControllerPage';
 import ModifyTrip from './pages/ModifyTrip';
 import Layout from './components/Layout';
+import RFIDTester from './components/RFIDTester';
+import { useOfflineSync } from './hooks/useOfflineSync';
+import { useFCM } from './hooks/useFCM';
 
 function AppRoutes() {
   const { token, isLoading, isBanned, hydrate } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Mount global offline sync listener
+  useOfflineSync();
+  // Mount FCM listener
+  useFCM();
 
   useEffect(() => {
     hydrate();
@@ -127,5 +135,10 @@ const styles: Record<string, React.CSSProperties> = {
 };
 
 export default function App() {
-  return <AppRoutes />;
+  return (
+    <>
+      <AppRoutes />
+      <RFIDTester />
+    </>
+  );
 }
