@@ -1,10 +1,9 @@
-databases:
+services:
   - name: transport-redis
     type: redis
     plan: free
     ipAllowList: []
 
-services:
   - type: web
     name: transport-backend
     env: node
@@ -16,8 +15,9 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: REDIS_URL
-        fromDatabase:
+        fromService:
           name: transport-redis
+          type: redis
           property: connectionString
       - key: NODE_ENV
         value: production
