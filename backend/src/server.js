@@ -20,6 +20,10 @@ const CORS_WHITELIST = [
   'http://localhost:5000',
 ];
 
+if (process.env.FRONTEND_URL) {
+  CORS_WHITELIST.push(process.env.FRONTEND_URL);
+}
+
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
