@@ -1,7 +1,6 @@
 const pool = require('../config/db');
 const Wallet = require('./Wallet');
 const Trip = require('./Trip');
-const { client: redisClient } = require('../config/redis');
 const NotificationService = require('../services/NotificationService');
 
 class Booking {
@@ -104,8 +103,7 @@ class Booking {
       let standbyPosition = null;
       let seatNumber = null;
       if (!isStandby) {
-        let redisDecremented = false;
-        try {
+        /* Legacy Redis decrement removed: a cache key is not an availability lock.
           // Attempt atomic decrement in Redis
           const newSeatCount = await redisClient.decr(`trip:${tripId}:seats:available`);
           if (newSeatCount < 0) {
@@ -130,6 +128,11 @@ class Booking {
           if (trip.available_seats <= 0) {
             throw new Error('No seats available for this trip');
           }
+        } */
+        // The trip row is already locked above, so PostgreSQL is authoritative.
+        // Redis may be missing or stale and must not reject a valid booking.
+        if (trip.available_seats <= 0) {
+          throw new Error('No seats available for this trip');
         }
         // Assign next sequential seat number (no gaps)
         const nextSeatRes = await client.query(
@@ -138,10 +141,19 @@ class Booking {
           [tripId]
         );
         seatNumber = nextSeatRes.rows[0].next_seat;
-        await client.query(
-          'UPDATE trips SET available_seats = available_seats - 1 WHERE id = $1',
+        const seatUpdate = await client.query(
+          `UPDATE trips SET available_seats = available_seats - 1
+           WHERE id = $1 AND available_seats > 0
+           RETURNING available_seats`,
           [tripId]
         );
+        if (!seatUpdate.rows.length) throw new Error('No seats available for this trip');
+        const remainingSeats = Number(seatUpdate.rows[0].available_seats);
+        if (remainingSeats === 10 || remainingSeats === 5) {
+          NotificationService.notifySeatAvailabilityDrop(
+            tripId, remainingSeats, trip.route_name, trip.departure_time
+          ).catch(err => console.error('Failed to send seat alert:', err));
+        }
       } else {
         if (trip.available_standby <= 0) {
           throw new Error('No standby spots available');
@@ -191,7 +203,7 @@ class Booking {
         .catch(err => console.error('Failed to send booking notification:', err));
 
       // Non-blocking: best-effort update Redis cache (never throw)
-      Trip.getAvailableSeats(tripId).catch(() => {});
+      Trip.refreshAvailableSeats(tripId).catch(() => {});
 
       return {
         ...booking,
@@ -205,7 +217,7 @@ class Booking {
     } catch (err) {
       await client.query('ROLLBACK');
       
-      // If we atomically decremented Redis but the transaction failed, we must increment it back!
+      /* Legacy Redis rollback removed: availability is changed only in the DB transaction.
       if (!isStandby && err.message !== 'No seats available for this trip' && err.message !== 'You already have an active booking' && err.message !== 'You have already booked this trip') {
         try {
           // Check if we actually decremented it by reading the trip id (or we could track a local flag)
@@ -215,7 +227,7 @@ class Booking {
         } catch (incrErr) {
           console.error('Failed to rollback Redis seat count:', incrErr);
         }
-      }
+      } */
 
       throw err;
     } finally {
@@ -420,7 +432,7 @@ class Booking {
         .catch(err => console.error('Failed to send cancellation notification:', err));
 
       // Non-blocking: refresh Redis cache
-      Trip.getAvailableSeats(b.trip_id).catch(() => {});
+      Trip.refreshAvailableSeats(b.trip_id).catch(() => {});
 
       return {
         ...b,
@@ -761,7 +773,7 @@ class Booking {
 
       await client.query('COMMIT');
 
-      Trip.getAvailableSeats(tripId).catch(() => {});
+      Trip.refreshAvailableSeats(tripId).catch(() => {});
 
       return {
         processed,
@@ -839,7 +851,7 @@ class Booking {
 
       await client.query('COMMIT');
 
-      Trip.getAvailableSeats(b.trip_id).catch(() => {});
+      Trip.refreshAvailableSeats(b.trip_id).catch(() => {});
 
       return { ...b, is_standby: false, standby_position: null, seat_number: seatNumber };
     } catch (err) {

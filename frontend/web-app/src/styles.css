@@ -281,6 +281,30 @@ table tbody tr:hover {
     font-size: 14px !important;
     padding: 8px 12px !important;
   }
+
+  .active-trip-banner {
+    align-items: stretch !important;
+    padding: 16px !important;
+    gap: 12px !important;
+  }
+
+  .active-trip-content {
+    width: 100%;
+  }
+
+  .active-trip-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 380px) {
+  .active-trip-content {
+    gap: 10px !important;
+  }
+
+  .active-trip-banner {
+    padding: 14px !important;
+  }
 }
 
 @keyframes spin {
@@ -299,4 +323,3 @@ table tbody tr:hover {
     opacity: 0;
   }
 }
-

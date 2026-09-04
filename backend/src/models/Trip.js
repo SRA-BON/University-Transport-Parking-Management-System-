@@ -70,14 +70,27 @@ class Trip {
   }
 
   static async getAvailableSeats(tripId) {
-    const cached = await safeRedis(redisClient.get(`trip:${tripId}:seats:available`), null);
-    if (cached !== null && cached !== undefined) return parseInt(cached, 10);
     const result = await pool.query('SELECT available_seats FROM trips WHERE id = $1', [tripId]);
     if (result.rows.length > 0) {
       await safeRedis(redisClient.set(`trip:${tripId}:seats:available`, result.rows[0].available_seats), null);
       return result.rows[0].available_seats;
     }
     return 0;
+  }
+
+  // The database is the source of truth. Call this after a transaction changes
+  // availability to update both seat and standby cache entries together.
+  static async refreshAvailableSeats(tripId) {
+    const result = await pool.query(
+      'SELECT available_seats, available_standby FROM trips WHERE id = $1',
+      [tripId]
+    );
+    if (!result.rows.length) return null;
+
+    const trip = result.rows[0];
+    await safeRedis(redisClient.set(`trip:${tripId}:seats:available`, trip.available_seats), null);
+    await safeRedis(redisClient.set(`trip:${tripId}:standby:available`, trip.available_standby), null);
+    return trip.available_seats;
   }
 
   static async decrementAvailableSeats(tripId, amount = 1) {

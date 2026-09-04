@@ -158,18 +158,17 @@ export default function Dashboard() {
       </div>
 
       {activeTripId && (
-        <div style={styles.activeTripBanner} onClick={() => navigate(`/trip/${activeTripId}/track`)}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1 }}>
+        <div className="active-trip-banner" style={styles.activeTripBanner} onClick={() => navigate(`/trip/${activeTripId}/track`)}>
+          <div className="active-trip-content" style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 0 }}>
             <div style={styles.activeTripIcon}>
               <div style={styles.busPulse} />
               🚌
             </div>
             <div>
               <p style={styles.activeTripTitle}>🟢 Your bus is now on the road!</p>
-              <p style={styles.activeTripSub}>Tap to track your journey live on Google Map</p>
             </div>
           </div>
-          <button style={styles.activeTripBtn}>
+          <button className="active-trip-button" style={styles.activeTripBtn}>
             📍 Track Yourself →
           </button>
         </div>

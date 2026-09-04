@@ -83,6 +83,11 @@ exports.updateTripStatus = async (req, res) => {
 
     const trip = await Trip.updateStatus(id, status, delayTime);
 
+    // Reconcile stale counters after a terminal/restart status change.
+    Trip.refreshAvailableSeats(id).catch(err => {
+      console.error('Failed to refresh trip seat cache after status update:', err);
+    });
+
     if (status === 'in_progress') {
       const BookingModel = require('../models/Booking');
       BookingModel.markNoShowsForTrip(id, true).catch(err => {
