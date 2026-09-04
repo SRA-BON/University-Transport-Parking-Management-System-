@@ -8,23 +8,14 @@ let isFirebaseInitialized = false;
 if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
   try {
     let privateKey = process.env.FIREBASE_PRIVATE_KEY || '';
-    
-    // Debug what the string looks like
-    console.log('DEBUG FIREBASE KEY:', {
-      length: privateKey.length,
-      startsWith: privateKey.substring(0, 30),
-      endsWith: privateKey.substring(privateKey.length - 30),
-      includesLiteralSlashN: privateKey.includes('\\n'),
-      includesRealNewline: privateKey.includes('\n'),
-    });
-
+    privateKey = privateKey.trim();
+    if (
+      (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
+      (privateKey.startsWith("'") && privateKey.endsWith("'"))
+    ) {
+      privateKey = privateKey.slice(1, -1);
+    }
     privateKey = privateKey.replace(/\\n/g, '\n');
-    if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-      privateKey = privateKey.slice(1, -1).replace(/\\n/g, '\n');
-    }
-    if (privateKey.startsWith("'") && privateKey.endsWith("'")) {
-      privateKey = privateKey.slice(1, -1).replace(/\\n/g, '\n');
-    }
 
     // Fix missing spaces around header if they got stripped
     privateKey = privateKey.replace(/-----BEGIN PRIVATE KEY-----/g, '-----BEGIN PRIVATE KEY-----\n');

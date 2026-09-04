@@ -201,7 +201,7 @@ export default function Register() {
                 shape="rectangular"
                 width={isMobile ? undefined : 400}
                 text="signup_with"
-                useOneTap
+                ux_mode="popup"
               />
             </div>
           </div>

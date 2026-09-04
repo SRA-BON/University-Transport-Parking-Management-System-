@@ -165,7 +165,7 @@ export default function Login() {
                 shape="rectangular"
                 width={isMobile ? undefined : 400}
                 text="continue_with"
-                useOneTap
+                ux_mode="popup"
                 auto_select={false}
               />
             </div>

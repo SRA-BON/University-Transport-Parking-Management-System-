@@ -4,11 +4,10 @@ const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
 const EmailService = require('../services/EmailService');
+const { googleAudiences, env } = require('../config/env');
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const VALID_AUDIENCES = [
-  GOOGLE_CLIENT_ID,
-];
+const VALID_AUDIENCES = googleAudiences();
+const GOOGLE_CLIENT_ID = VALID_AUDIENCES[0] || env('GOOGLE_CLIENT_ID');
 const VALID_ISSUERS = ['accounts.google.com', 'https://accounts.google.com'];
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
@@ -128,12 +127,18 @@ class AuthController {
         return res.status(400).json({ error: 'Invalid Google ID token format' });
       }
 
+      if (!VALID_AUDIENCES.length) {
+        console.error('❌ GOOGLE_CLIENT_ID is not set on the server');
+        return res.status(500).json({
+          error: 'Google sign-in is not configured. Set GOOGLE_CLIENT_ID on the server to the same Web client ID as the frontend.',
+        });
+      }
+
       let ticket;
       try {
         ticket = await client.verifyIdToken({
           idToken: idToken.trim(),
           audience: VALID_AUDIENCES,
-          maxExpiry: Math.floor(Date.now() / 1000) + 60 * 60,
         });
       } catch (verifyErr) {
         console.error('❌ Google ID Token Verification Failed:', verifyErr.message);
@@ -159,8 +164,9 @@ class AuthController {
           });
         }
         if (verifyErr.message && (verifyErr.message.includes('audience') || verifyErr.message.includes('client_id'))) {
+          console.error('❌ Audience mismatch. Server GOOGLE_CLIENT_ID(s):', VALID_AUDIENCES);
           return res.status(400).json({ 
-            error: 'Google token audience mismatch. Please check Google Cloud Console configuration.',
+            error: 'Google token audience mismatch. The backend GOOGLE_CLIENT_ID must be the same Web client ID as VITE_GOOGLE_CLIENT_ID (no extra quotes). Add Authorized JavaScript origins for the Firebase Hosting URL.',
             debug: verifyErr.message
           });
         }

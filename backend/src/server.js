@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 require('dotenv').config();
+const { stripQuotes } = require('./config/env');
 const pool = require('./config/db');
 const { connectRedis, client: redisClient, disconnectRedis } = require('./config/redis');
 const { scheduleDailyNotifications } = require('./workers/NotificationWorker');
@@ -15,9 +16,13 @@ const REQUIRED_ENV_PROD = [
 ];
 
 function validateEnv() {
-  const missing = REQUIRED_ENV_PROD.filter((r) => !process.env[r.key] || String(process.env[r.key]).trim() === '');
-  const dbUrlOk = !!process.env.DATABASE_URL;
-  const dbPartsOk = process.env.DB_HOST && process.env.DB_USER && process.env.DB_PASSWORD && process.env.DB_NAME;
+  const missing = REQUIRED_ENV_PROD.filter((r) => !stripQuotes(process.env[r.key]));
+  const dbUrlOk = !!stripQuotes(process.env.DATABASE_URL);
+  const dbPartsOk =
+    stripQuotes(process.env.DB_HOST) &&
+    stripQuotes(process.env.DB_USER) &&
+    stripQuotes(process.env.DB_PASSWORD) &&
+    stripQuotes(process.env.DB_NAME);
   if (!dbUrlOk && !dbPartsOk) {
     missing.push({ key: 'DATABASE_URL or DB_HOST+DB_USER+DB_PASSWORD+DB_NAME', label: 'PostgreSQL connection' });
   }
@@ -41,17 +46,18 @@ app.use(helmet({
     useDefaults: true,
     directives: {
       'default-src': ["'self'"],
-      'script-src': ["'self'", "'unsafe-inline'", "https://www.gstatic.com", "https://maps.googleapis.com"],
+      'script-src': ["'self'", "'unsafe-inline'", "https://www.gstatic.com", "https://maps.googleapis.com", "https://accounts.google.com"],
       'style-src': ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       'font-src': ["'self'", "https://fonts.gstatic.com", "data:"],
       'img-src': ["'self'", "data:", "blob:", "https:", "http://*.bracu.ac.bd", "https://*.bracu.ac.bd"],
-      'connect-src': ["'self'", "https://*.googleapis.com", "https://*.firebaseio.com", "wss:"],
+      'connect-src': ["'self'", "https://*.googleapis.com", "https://*.firebaseio.com", "https://accounts.google.com", "wss:"],
       'frame-src': ["'self'", "https://accounts.google.com"],
       'worker-src': ["'self'", "blob:"],
       'media-src': ["'self'", "blob:"],
     },
   },
   crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
@@ -273,6 +279,13 @@ process.on('unhandledRejection', (reason) => {
 
 const startServer = async () => {
   try {
+    try {
+      await pool.query('SELECT 1');
+      console.log('[DB] Connection OK');
+    } catch (dbErr) {
+      console.error('[DB] Connection failed at startup:', dbErr.message);
+      console.error('[DB] Check Render env: use Supabase DATABASE_URL (URL-encode special characters in the password) or DB_USER=postgres.<project-ref> for the pooler. A Render Postgres DATABASE_URL with user "postgres" will override DB_* if both are set.');
+    }
     await connectRedis();
     httpServer = app.listen(PORT, () => {
       console.log(`[Server] Listening on port ${PORT} · env=${isProd ? 'production' : 'development'}`);

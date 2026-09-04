@@ -19,6 +19,7 @@ client.on('error', (err) => {
 
 client.on('connect', () => {
   console.log('[Redis] Client Connected');
+  console.log('[Redis] If BullMQ warns about volatile-lru, set this Redis instance maxmemory-policy to noeviction in the Redis provider dashboard.');
 });
 
 const connectRedis = async () => {
