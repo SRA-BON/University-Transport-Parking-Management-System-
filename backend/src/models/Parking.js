@@ -280,7 +280,7 @@ class Parking {
       await client.query('BEGIN');
 
       const userResult = await client.query(
-        'SELECT id, name, student_id, email, department, rfid_id, role FROM users WHERE id = $1',
+        'SELECT u.id, u.name, s.student_id, u.email, u.department, u.rfid_id, u.role FROM users u LEFT JOIN students s ON u.id = s.user_id WHERE u.id = $1',
         [userId]
       );
       if (userResult.rows.length === 0) {
@@ -412,7 +412,7 @@ class Parking {
       await client.query('BEGIN');
 
       const userResult = await client.query(
-        'SELECT id, name, student_id, email, department, rfid_id, role FROM users WHERE id = $1',
+        'SELECT u.id, u.name, s.student_id, u.email, u.department, u.rfid_id, u.role FROM users u LEFT JOIN students s ON u.id = s.user_id WHERE u.id = $1',
         [userId]
       );
       if (userResult.rows.length === 0) {
@@ -543,7 +543,29 @@ class Parking {
       'SELECT * FROM parking_sessions WHERE user_id = $1 ORDER BY entry_time DESC',
       [userId]
     );
-    return result.rows;
+    return result.rows.map(r => ({
+      ...r,
+      fee: r.fee != null ? Number(r.fee) : null,
+      duration_minutes: r.duration_minutes != null ? Number(r.duration_minutes) : null,
+    }));
+  }
+
+  static async getAllActiveSessions() {
+    const result = await pool.query(
+      `SELECT ps.id, ps.user_id, ps.vehicle_reg_no, ps.digital_token,
+              ps.entry_time, ps.status,
+              u.name AS student_name, s.student_id, u.department, u.rfid_id,
+              EXTRACT(EPOCH FROM (NOW() - ps.entry_time))/60 AS duration_minutes_so_far
+       FROM parking_sessions ps
+       JOIN users u ON u.id = ps.user_id
+       LEFT JOIN students s ON u.id = s.user_id
+       WHERE ps.status = 'active'
+       ORDER BY ps.entry_time DESC`
+    );
+    return result.rows.map(r => ({
+      ...r,
+      duration_minutes_so_far: r.duration_minutes_so_far != null ? Number(r.duration_minutes_so_far) : null,
+    }));
   }
 
   static async getActiveSession(userId) {
@@ -551,7 +573,13 @@ class Parking {
       'SELECT * FROM parking_sessions WHERE user_id = $1 AND status = $2 ORDER BY entry_time DESC LIMIT 1',
       [userId, 'active']
     );
-    return result.rows[0];
+    const r = result.rows[0];
+    if (!r) return r;
+    return {
+      ...r,
+      fee: r.fee != null ? Number(r.fee) : null,
+      duration_minutes: r.duration_minutes != null ? Number(r.duration_minutes) : null,
+    };
   }
 
   static async updateCapacity(totalSpots) {

@@ -249,8 +249,8 @@ exports.runNoShowForTrip = async (req, res) => {
 
 exports.runAllNoShows = async (req, res) => {
   try {
-    if (!['super_admin', 'developer', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Forbidden' });
+    if (!['super_admin', 'admin', 'manager', 'developer'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
     }
     const result = await Booking.processAllDueNoShows();
     res.status(200).json({ message: `No-show sweep ran for ${result.checked_trips} trips`, result });
@@ -272,3 +272,62 @@ exports.assignStandbyToSeat = async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 };
+
+/**
+ * Student self-scan (bypass RFID hardware).
+ * Authenticated student calls this to record their own boarding on a trip.
+ * Equivalent to a bus attendant scanning their RFID card at the gate.
+ */
+exports.selfScan = async (req, res) => {
+  try {
+    const { trip_id } = req.body;
+    const userId = req.user.id;
+
+    if (!trip_id) {
+      return res.status(400).json({ error: 'trip_id is required' });
+    }
+
+    console.log(`📱 Student self-scan — userId=${userId}, trip=${trip_id}`);
+
+    try {
+      const result = await Booking.rfidScanBooking(userId, trip_id, 'self_scan_app');
+
+      console.log(`✅ Self-scan ok — userId=${userId} booking #${result.id}`);
+
+      res.status(200).json({
+        success: true,
+        event: 'transport_gate_scan',
+        message: 'Boarding recorded successfully! You are now marked as on-board.',
+        student: {
+          id: req.user.id,
+          name: req.user.name,
+          student_id: req.user.student_id,
+          email: req.user.email,
+        },
+        booking: {
+          id: result.id,
+          trip_id: result.trip_id,
+          status: result.status,
+          is_rfid_scanned: true,
+          scanned_at: result.scanned_at,
+          is_standby: result.is_standby,
+          standby_position: result.standby_position,
+        },
+      });
+    } catch (bErr) {
+      const msg = String(bErr.message || '');
+      let code = 'SCAN_FAILED';
+      let friendly = msg;
+
+      if (msg === 'NO_BOOKING')      { code = 'NO_BOOKING';      friendly = 'No active booking found for this trip.'; }
+      else if (msg === 'BOOKING_CANCELLED') { code = 'BOOKING_CANCELLED'; friendly = 'This booking has been cancelled.'; }
+      else if (msg === 'NO_SHOW_MARKED')    { code = 'NO_SHOW_MARKED';    friendly = 'Trip already closed — you were marked no-show.'; }
+
+      return res.status(400).json({ success: false, error: code, message: friendly });
+    }
+  } catch (error) {
+    console.error('❌ Self-scan crashed:', error);
+    res.status(500).json({ error: 'Failed to process self-scan', details: error.message });
+  }
+};
+

@@ -4,6 +4,7 @@ import api from '../services/api';
 import { useAuthStore } from '../store/authStore';
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
+  pending:     { bg: '#F3F4F6', color: '#6B7280' },
   scheduled:   { bg: '#E8F5E9', color: '#2E7D32' },
   in_progress: { bg: '#E3F2FD', color: '#1565C0' },
   completed:   { bg: '#F5F5F5', color: '#555' },
@@ -19,6 +20,7 @@ export default function Explore() {
   const [filter, setFilter]   = useState('');
   const [activeBookingMsg, setActiveBookingMsg] = useState<string | null>(null);
   const [now, setNow] = useState<Date>(new Date());
+  const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; message: string; onConfirm?: () => void; danger?: boolean }>({ open: false, title: '', message: '' });
   
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
@@ -36,8 +38,8 @@ export default function Explore() {
   const [statusHover, setStatusHover]   = useState(false);
   const bulkRef = useRef<HTMLDivElement>(null);
 
-  const canUpdateStatus = ['super_admin', 'manager', 'developer', 'admin', 'bus_attendant'].includes(user?.role || '');
-  const canManageTrips  = ['super_admin', 'manager', 'developer', 'admin'].includes(user?.role || '');
+  const canUpdateStatus = ['super_admin', 'admin', 'manager', 'developer', 'bus_attendant'].includes(user?.role || '');
+  const canManageTrips  = ['super_admin', 'admin', 'manager', 'developer'].includes(user?.role || '');
   const canModifyTrip   = canUpdateStatus || ['bus_attendant'].includes(user?.role || '');
   const isStudent       = user?.role === 'student';
 
@@ -99,7 +101,7 @@ export default function Explore() {
         const ab = res.data.activeBooking;
         if (ab) {
           setActiveBookingMsg(
-            `⚠️ You already have an active booking for ${new Date(ab.trip?.departure_time || ab.departure_time).toLocaleString()}. ` +
+            `⚠️ You already have an active booking for ${new Date(ab.trip?.departure_time || ab.departure_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}. ` +
             `Only one future trip is allowed — cancel that booking first to book another.`
           );
         } else {
@@ -117,14 +119,31 @@ export default function Explore() {
     const penalty = Number(t.route?.emergency_cancel_penalty ?? 50);
     const grace = Number(t.route?.no_show_grace_minutes ?? 5);
 
-    const bookable = minsToDepart > 0 && minsToDepart <= bookingWindowMins;
+    const bookable = t.status === 'scheduled' || (minsToDepart > 0 && minsToDepart <= bookingWindowMins);
     return { minsToDepart, bookingWindowMins, freeCancelMins, penalty, grace, bookable };
   };
 
-  const filtered = trips.filter((t) =>
-    (t.route?.name || t.route_name || '').toLowerCase().includes(filter.toLowerCase()) ||
-    (t.bus_number || '').toLowerCase().includes(filter.toLowerCase())
-  );
+  const statusPriority: Record<string, number> = {
+    in_progress: 1,
+    scheduled: 2,
+    pending: 3,
+    completed: 4,
+    cancelled: 5
+  };
+
+  const filtered = trips
+    .filter((t) =>
+      (t.route?.name || t.route_name || '').toLowerCase().includes(filter.toLowerCase()) ||
+      (t.bus_number || '').toLowerCase().includes(filter.toLowerCase())
+    )
+    .sort((a, b) => {
+      const priorityA = statusPriority[a.status] || 99;
+      const priorityB = statusPriority[b.status] || 99;
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+      return new Date(a.departure_time).getTime() - new Date(b.departure_time).getTime();
+    });
 
   // ── Selection helpers ─────────────────────────────────────────────────────
   const toggleSelect = (id: number) => {
@@ -139,32 +158,38 @@ export default function Explore() {
   const clearAll  = () => setSelected(new Set());
   const allSelected = filtered.length > 0 && filtered.every((t) => selected.has(t.id));
 
-  // ── Individual actions ────────────────────────────────────────────────────
-  const bookTrip = async (tripId: number) => {
+  const runBookTrip = async (tripId: number) => {
     const trip = trips.find((t) => t.id === tripId);
-    const ti = getTripTimingInfo(trip);
-    if (!ti.bookable) {
-      alert(`❌ Booking opens ${ti.bookingWindowMins / 60}h before departure.\n\nCurrent time: ${now.toLocaleString()}\nDeparture: ${new Date(trip.departure_time).toLocaleString()}`);
-      return;
-    }
-    if (!confirm('Confirm booking for this trip?\n\n' +
-      `Booking rules:\n` +
-      `• 3-hour booking window (opens 3h before departure)\n` +
-      `• Cancellation FREE up to 1h before departure\n` +
-      `• Cancellations inside 1h: ${ti.penalty} BDT emergency penalty\n` +
-      `• No-show (not scanned within ${ti.grace} min of departure): full fare kept + counted in no-show history\n` +
-      `• Exactly ONE active booking per student — cancel first to book another.`)) return;
     try {
       const res = await api.post('/bookings', { tripId: tripId });
       alert('✅ Booking confirmed!\n\n' +
         `Route: ${trip.route?.name || trip.route_name}\n` +
-        `Departure: ${new Date(trip.departure_time).toLocaleString()}\n\n` +
+        `Departure: ${new Date(trip.departure_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}\n\n` +
         'Don\'t forget to scan your RFID card at the bus gate — otherwise you will be marked as NO-SHOW.'
       );
       loadData();
     } catch (e: any) {
       alert('❌ Failed to book: ' + (e.response?.data?.error || e.message));
     }
+  };
+
+  // ── Individual actions ────────────────────────────────────────────────────
+  const bookTrip = async (tripId: number) => {
+    const trip = trips.find((t) => t.id === tripId);
+    const ti = getTripTimingInfo(trip);
+    if (!ti.bookable) {
+      alert(`❌ Booking opens ${ti.bookingWindowMins / 60}h before departure.\n\nCurrent time: ${now.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}\nDeparture: ${new Date(trip.departure_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}`);
+      return;
+    }
+    setConfirmDialog({
+      open: true,
+      title: 'Confirm Booking',
+      message: 'Booking rules:\n• 3-hour booking window (opens 3h before departure)\n• Cancellation FREE up to 1h before departure\n• Cancellations inside 1h: ' + ti.penalty + ' BDT emergency penalty\n• No-show (not scanned within ' + ti.grace + ' min of departure): full fare kept + counted in no-show history\n• Exactly ONE active booking per student — cancel first to book another.',
+      onConfirm: () => {
+        setConfirmDialog(d => ({ ...d, open: false }));
+        runBookTrip(tripId);
+      },
+    });
   };
 
   const handleUpdateStatus = async (tripId: number, status: string) => {
@@ -177,11 +202,7 @@ export default function Explore() {
   };
 
   // ── Bulk actions ──────────────────────────────────────────────────────────
-  const bulkUpdateStatus = async (status: string) => {
-    setBulkOpen(false);
-    setStatusHover(false);
-    if (selected.size === 0) return;
-    if (!confirm(`Update ${selected.size} trip(s) to "${status}"?`)) return;
+  const runBulkUpdateStatus = async (status: string) => {
     try {
       await Promise.all([...selected].map((id) => api.put(`/trips/${id}/status`, { status })));
       loadData();
@@ -189,17 +210,42 @@ export default function Explore() {
       alert('❌ Bulk status update failed: ' + (e.response?.data?.error || e.message));
     }
   };
-
-  const bulkDelete = async () => {
+  const bulkUpdateStatus = async (status: string) => {
     setBulkOpen(false);
+    setStatusHover(false);
     if (selected.size === 0) return;
-    if (!confirm(`Delete ${selected.size} selected trip(s)? This cannot be undone.`)) return;
+    setConfirmDialog({
+      open: true,
+      title: 'Update Trip Status',
+      message: `Update ${selected.size} trip(s) to "${status}"?`,
+      onConfirm: () => {
+        setConfirmDialog(d => ({ ...d, open: false }));
+        runBulkUpdateStatus(status);
+      },
+    });
+  };
+
+  const runBulkDelete = async () => {
     try {
       await Promise.all([...selected].map((id) => api.delete(`/trips/${id}`)));
       loadData();
     } catch (e: any) {
       alert('❌ Bulk delete failed: ' + (e.response?.data?.error || e.message));
     }
+  };
+  const bulkDelete = async () => {
+    setBulkOpen(false);
+    if (selected.size === 0) return;
+    setConfirmDialog({
+      open: true,
+      title: 'Delete Trips',
+      message: `Delete ${selected.size} selected trip(s)? This cannot be undone.`,
+      danger: true,
+      onConfirm: () => {
+        setConfirmDialog(d => ({ ...d, open: false }));
+        runBulkDelete();
+      },
+    });
   };
 
   return (
@@ -254,7 +300,7 @@ export default function Explore() {
                 onClick={() => setBulkOpen((p) => !p)}
                 style={styles.bulkBtn}
               >
-                Bulk Actions ▾
+                Actions ▾
               </button>
 
               {bulkOpen && (
@@ -280,7 +326,7 @@ export default function Explore() {
                           left: '100%',
                         })
                       }}>
-                        {(['scheduled', 'in_progress', 'completed', 'cancelled'] as const).map((s) => (
+                        {(['pending', 'scheduled', 'in_progress', 'completed', 'cancelled'] as const).map((s) => (
                           <div
                             key={s}
                             style={{
@@ -368,7 +414,7 @@ export default function Explore() {
                   </div>
                   <div>
                     <div style={styles.infoLabel}>Departs</div>
-                    <div style={styles.infoValue}>🕒 {new Date(t.departure_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}</div>
+                    <div style={styles.infoValue}>🕒 {new Date(t.departure_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}</div>
                   </div>
                 </div>
 
@@ -387,24 +433,49 @@ export default function Explore() {
 
                 {/* Footer: Status + Book */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, flexWrap: 'wrap', gap: 8 }}>
-                  {canUpdateStatus ? (
-                    <select
-                      value={t.status}
-                      onChange={(e) => handleUpdateStatus(t.id, e.target.value)}
-                      style={{
-                        ...styles.statusBadge,
-                        background: sc.bg,
-                        color: sc.color,
-                        border: '1px solid ' + sc.color + '44',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <option value="scheduled">Scheduled</option>
-                      <option value="in_progress">In Progress</option>
-                      <option value="completed">Completed</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
-                  ) : (
+                  {canUpdateStatus ? (() => {
+                    // One-way flow: show only valid next transitions
+                    const NEXT: Record<string, { label: string; value: string; color: string; bg: string }[]> = {
+                      pending:     [{ label: 'Open Booking', value: 'scheduled', color: '#1565C0', bg: '#E3F2FD' }, { label: 'Cancel', value: 'cancelled', color: '#B71C1C', bg: '#FFEBEE' }],
+                      scheduled:   [{ label: 'Start Trip',   value: 'in_progress', color: '#E65100', bg: '#FFF3E0' }, { label: 'Cancel', value: 'cancelled', color: '#B71C1C', bg: '#FFEBEE' }],
+                      in_progress: [{ label: 'Complete',     value: 'completed', color: '#1B5E20', bg: '#E8F5E9' }],
+                      completed:   [{ label: 'Restart',      value: 'scheduled', color: '#6A1B9A', bg: '#F3E5F5' }],
+                      cancelled:   [{ label: 'Restart',      value: 'scheduled', color: '#6A1B9A', bg: '#F3E5F5' }],
+                    };
+                    const nextSteps = NEXT[t.status] || [];
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                        {/* Current status badge */}
+                        <span style={{ ...styles.statusBadge, background: sc.bg, color: sc.color, fontSize: 11 }}>
+                          {t.status.replace('_', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
+                        </span>
+                        {/* Next-step buttons */}
+                        {nextSteps.length > 0 && (
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            {nextSteps.map((ns) => (
+                              <button
+                                key={ns.value}
+                                onClick={() => handleUpdateStatus(t.id, ns.value)}
+                                style={{
+                                  background: ns.bg,
+                                  color: ns.color,
+                                  border: `1px solid ${ns.color}55`,
+                                  borderRadius: 6,
+                                  padding: '3px 10px',
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {ns.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })() : (
                     <span style={{ ...styles.statusBadge, background: sc.bg, color: sc.color }}>
                       {t.status.replace('_', ' ')}
                     </span>
@@ -441,9 +512,81 @@ export default function Explore() {
           })}
         </div>
       )}
+
+      {/* ── Custom Confirm Dialog (small popup) ── */}
+      {confirmDialog.open && (
+        <div style={confirmOverlay}>
+          <div style={{
+            ...confirmBox,
+            border: `2px solid ${confirmDialog.danger ? '#EF5350' : '#6C63FF'}`,
+          }}>
+            <h3 style={{
+              margin: 0,
+              fontSize: 14,
+              fontWeight: 900,
+              letterSpacing: -0.2,
+              color: confirmDialog.danger ? '#C62828' : 'var(--text-primary)',
+            }}>{confirmDialog.title}</h3>
+            <p style={{
+              margin: '8px 0 16px 0',
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              lineHeight: 1.55,
+              whiteSpace: 'pre-line',
+              fontWeight: 500,
+            }}>{confirmDialog.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                style={cancelBtn}
+                onClick={() => setConfirmDialog(d => ({ ...d, open: false }))}
+              >Cancel</button>
+              <button
+                style={{
+                  ...okBtn,
+                  background: confirmDialog.danger ? '#EF5350' : '#6C63FF',
+                }}
+                onClick={() => confirmDialog.onConfirm?.()}
+              >Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+const confirmOverlay: React.CSSProperties = {
+  position: 'fixed', inset: 0,
+  background: 'rgba(0,0,0,0.42)',
+  display: 'grid', placeItems: 'center',
+  zIndex: 9999,
+  padding: 20,
+};
+const confirmBox: React.CSSProperties = {
+  width: 'min(420px, 100%)',
+  background: 'var(--bg-card)',
+  borderRadius: 12,
+  padding: '18px 18px 14px',
+  boxShadow: '0 24px 64px rgba(0,0,0,0.28)',
+};
+const cancelBtn: React.CSSProperties = {
+  padding: '9px 16px',
+  borderRadius: 10,
+  border: '1px solid var(--border-color)',
+  background: 'var(--bg-primary)',
+  color: 'var(--text-primary)',
+  fontWeight: 800, fontSize: 12,
+  cursor: 'pointer',
+};
+const okBtn: React.CSSProperties = {
+  padding: '9px 16px',
+  borderRadius: 10,
+  border: 'none',
+  color: '#fff',
+  fontWeight: 800, fontSize: 12,
+  cursor: 'pointer',
+  boxShadow: '0 4px 14px rgba(108,99,255,0.3)',
+};
 
 const styles: Record<string, React.CSSProperties> = {
   header: {

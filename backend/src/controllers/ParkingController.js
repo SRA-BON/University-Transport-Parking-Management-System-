@@ -228,6 +228,89 @@ exports.createExit = async (req, res) => {
   }
 };
 
+exports.processScan = async (req, res) => {
+  try {
+    const { rfidId, vehicleId } = req.body;
+    let userId;
+    let scannedRfid = rfidId;
+
+    if (scannedRfid) {
+      const user = await User.findByRFID(scannedRfid);
+      if (!user) {
+        return res.status(404).json({ error: `RFID not registered` });
+      }
+      if (user.is_active === false) {
+        return res.status(403).json({ error: 'User account is deactivated' });
+      }
+      userId = user.id;
+    } else {
+      userId = req.user.id;
+      scannedRfid = req.user.rfid_id;
+    }
+
+    const active = await Parking.getActiveSession(userId);
+    const action = active ? 'exit' : 'entry';
+
+    if (action === 'entry') {
+      const result = await Parking.createEntry(userId, vehicleId ? parseInt(vehicleId) : null);
+      return res.status(201).json({
+        action: 'entry',
+        message: 'Parking entry recorded successfully',
+        entry: {
+          session_id: result.id,
+          digital_token: result.digital_token,
+          entry_time: result.entry_time,
+          status: result.status,
+          vehicle_id: result.vehicle_id,
+        },
+        student: {
+          name: result.student.name,
+          student_id: result.student.student_id,
+          department: result.student.department,
+          email: result.student.email,
+          rfid_id: scannedRfid || result.student.rfid_id,
+        },
+        vehicle: {
+          id: result.vehicle_id,
+          registration_no: result.vehicle_reg_no,
+        },
+        parking_summary: result.parking_summary,
+      });
+    }
+
+    const result = await Parking.createExit(userId);
+    return res.status(200).json({
+      action: 'exit',
+      message: 'Parking exit processed & bill paid successfully',
+      session: {
+        id: result.session.id,
+        digital_token: result.digital_token,
+        entry_time: result.session.entry_time,
+        exit_time: result.session.exit_time,
+        duration_minutes: result.session.duration_minutes,
+        status: result.session.status,
+      },
+      student: {
+        name: result.student.name,
+        student_id: result.student.student_id,
+        department: result.student.department,
+        email: result.student.email,
+        rfid_id: scannedRfid || result.student.rfid_id,
+      },
+      vehicle: {
+        registration_no: result.vehicle_reg_no,
+      },
+      bill: result.bill,
+      wallet: result.wallet,
+      transaction: result.transaction,
+      parking_summary: result.parking_summary,
+    });
+  } catch (error) {
+    console.error('Process parking scan error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
 exports.getSessions = async (req, res) => {
   try {
     const sessions = await Parking.getSessions(req.user.id);
@@ -263,8 +346,8 @@ exports.getParkingCapacity = async (req, res) => {
 
 exports.updateCapacity = async (req, res) => {
   try {
-    if (!['developer', 'manager'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Forbidden' });
+    if (!['super_admin', 'admin', 'manager', 'developer', 'parking_attendant'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
     }
 
     const { totalSpots } = req.body;
@@ -292,8 +375,8 @@ exports.getParkingFeeRate = async (req, res) => {
 
 exports.updateFeeRate = async (req, res) => {
   try {
-    if (!['developer', 'manager'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Forbidden' });
+    if (!['super_admin', 'admin', 'manager', 'developer', 'parking_attendant'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
     }
 
     const { ratePerHour } = req.body;
@@ -305,6 +388,15 @@ exports.updateFeeRate = async (req, res) => {
     res.status(200).json({ message: 'Parking fee rate updated', rate });
   } catch (error) {
     console.error('Update parking fee rate error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+exports.getAllActiveSessions = async (req, res) => {
+  try {
+    const sessions = await Parking.getAllActiveSessions();
+    res.status(200).json({ sessions });
+  } catch (error) {
+    console.error('Get all active sessions error:', error);
     res.status(500).json({ error: error.message });
   }
 };

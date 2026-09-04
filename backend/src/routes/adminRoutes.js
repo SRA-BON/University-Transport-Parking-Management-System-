@@ -5,8 +5,8 @@ const authMiddleware = require('../middleware/authMiddleware');
 const roleMiddleware = require('../middleware/roleMiddleware');
 
 router.use(authMiddleware);
-// Only developer and manager can access user management
-router.use(roleMiddleware(['manager']));
+// Admin, super_admin, manager, developer can access user management
+router.use(roleMiddleware(['super_admin', 'admin', 'manager', 'developer']));
 
 router.get('/users', AdminController.getAllUsers);
 router.post('/users', AdminController.createUser);

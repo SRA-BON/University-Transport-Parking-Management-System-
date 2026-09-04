@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
 import { useRFIDScanner } from '../hooks/useRFIDScanner';
@@ -49,7 +49,7 @@ export default function ModifyTrip() {
 
   useRFIDScanner(handleScan);
 
-  const canManage = ['super_admin', 'manager', 'developer', 'admin', 'bus_attendant'].some(
+  const canManage = ['super_admin', 'admin', 'manager', 'developer', 'bus_attendant'].some(
     (r) => (window as any).__AUTH_ROLE === r ||
       JSON.parse(localStorage.getItem('auth_user') || '{}').role === r
   );
@@ -169,7 +169,7 @@ export default function ModifyTrip() {
           <Link to="/explore" style={{ color: '#6C63FF', fontWeight: 700, textDecoration: 'none' }}>← Back to Trips</Link>
           <h2 style={styles.heading}>🔧 Modify Trip #{tripId}</h2>
           <p style={styles.sub}>
-            {trip.route_name} · 🚍 {trip.bus_number} · 🕒 {new Date(trip.departure_time).toLocaleString()}
+            {trip.route_name} · 🚍 {trip.bus_number} · 🕒 {new Date(trip.departure_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
           </p>
           {!isOnline && (
             <div style={{ marginTop: 8, display: 'inline-block', padding: '4px 8px', background: '#FF9800', color: 'white', borderRadius: 6, fontSize: 12, fontWeight: 700 }}>
@@ -180,6 +180,11 @@ export default function ModifyTrip() {
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button onClick={loadManifest} style={styles.outlineBtn}>🔄 Refresh</button>
+          <Link to={`/trip/${tripId}/track`} style={{ textDecoration: 'none' }}>
+            <button style={{ ...styles.outlineBtn, color: '#1565C0', borderColor: '#1565C0', background: '#E3F2FD' }}>
+              📍 Live Track & GPS
+            </button>
+          </Link>
           {canManage && (
             <button
               onClick={markNoShows}
@@ -271,8 +276,8 @@ export default function ModifyTrip() {
             <thead>
               <tr style={styles.theadRow}>
                 <th style={styles.th}>SL</th>
-                <th style={styles.th}>Student</th>
-                <th style={styles.th}>Student ID</th>
+                <th style={styles.th}>Passenger</th>
+                <th style={styles.th}>ID</th>
                 <th style={styles.th}>Dept</th>
                 <th style={styles.th}>Type</th>
                 <th style={styles.th}>Fare</th>
@@ -336,9 +341,9 @@ export default function ModifyTrip() {
                     </td>
                     <td style={styles.td}>
                       {p.scanned_at
-                        ? new Date(p.scanned_at).toLocaleString()
+                        ? new Date(p.scanned_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
                         : p.checked_in_at
-                        ? `Check-in: ${new Date(p.checked_in_at).toLocaleString()}`
+                        ? `Check-in: ${new Date(p.checked_in_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}`
                         : '—'}
                     </td>
                     <td style={styles.td}>

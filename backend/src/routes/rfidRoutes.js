@@ -8,9 +8,11 @@ const authMiddleware = require('../middleware/authMiddleware');
 router.post('/verify', RFIDController.verify);
 router.post('/parking/entry', RFIDController.parkingEntry);
 router.post('/parking/exit', RFIDController.parkingExit);
+router.post('/parking/scan', RFIDController.parkingScan);
 
 // Protected routes (require authentication)
 router.use(authMiddleware);
+router.get('/lookup', RFIDController.lookup);
 router.post('/register', RFIDController.register);
 router.post('/unregister', RFIDController.unregister);
 

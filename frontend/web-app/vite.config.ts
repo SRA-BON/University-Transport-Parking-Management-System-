@@ -35,6 +35,7 @@ function firebaseSwEnvPlugin(env: Record<string, string>) {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const port = Number(env.VITE_PORT) || 5173;
+  const isProd = mode === 'production';
 
   return {
     plugins: [react(), firebaseSwEnvPlugin(env)],
@@ -53,6 +54,19 @@ export default defineConfig(({ mode }) => {
       port: port,
       strictPort: false,
       host: true,
+    },
+    build: {
+      target: 'es2020',
+      sourcemap: !isProd,
+      cssCodeSplit: true,
+      minify: isProd ? 'esbuild' : false,
+      rollupOptions: {
+        output: {
+          entryFileNames: isProd ? 'assets/[name]-[hash].js' : undefined,
+          chunkFileNames: isProd ? 'assets/[name]-[hash].js' : undefined,
+          assetFileNames: isProd ? 'assets/[name]-[hash][extname]' : undefined,
+        },
+      },
     },
   };
 });

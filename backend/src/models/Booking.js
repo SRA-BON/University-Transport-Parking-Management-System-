@@ -37,7 +37,7 @@ class Booking {
       const activeBooking = await this.findActiveFutureBookingByUser(userId);
       if (activeBooking) {
         throw new Error(
-          `You already have an active booking (for ${new Date(activeBooking.departure_time).toLocaleString()}). ` +
+          `You already have an active booking (for ${new Date(activeBooking.departure_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}). ` +
           `Only one active future trip is allowed per student — cancel it first before booking another.`
         );
       }
@@ -71,22 +71,13 @@ class Booking {
         throw new Error('Trip is not available for booking');
       }
 
-      // ── Rule 3: 3h booking window ─────────────────────────────────────
-      const now = new Date();
-      const bookingCutoff = new Date(
-        new Date(trip.departure_time).getTime() -
-        (trip.booking_window_minutes * 60 * 1000)
-      );
-      if (now < bookingCutoff) {
-        const hrs = trip.booking_window_minutes / 60;
-        throw new Error(
-          `Booking opens ${hrs} hours before departure. ` +
-          `Try again after ${bookingCutoff.toLocaleString()}.`
-        );
-      }
-      if (now >= new Date(trip.departure_time)) {
-        throw new Error('This trip has already departed');
-      }
+      // Time restriction removed as per user request: 'scheduled' status means booking is open.
+      // Even if now >= departure_time, if the manager manually keeps/sets it as 'scheduled',
+      // it means they want to allow bookings.
+      // const now = new Date();
+      // if (now >= new Date(trip.departure_time)) {
+      //   throw new Error('This trip has already departed');
+      // }
 
       // ── Rule 4: deduct fare FROM WALLET AT BOOKING TIME (atomic!) ─────
       // Per user requirement: money is charged at booking; if no-show they
@@ -178,10 +169,13 @@ class Booking {
       // Link the payment transaction we created earlier to this booking id
       await client.query(
         `UPDATE transactions SET booking_id = $1
-           WHERE wallet_id = (SELECT id FROM wallets WHERE user_id = $2)
-             AND type = 'payment'
-             AND booking_id IS NULL
-           ORDER BY id DESC LIMIT 1`,
+           WHERE id = (
+             SELECT id FROM transactions
+             WHERE wallet_id = (SELECT id FROM wallets WHERE user_id = $2)
+               AND type = 'payment'
+               AND booking_id IS NULL
+             ORDER BY id DESC LIMIT 1
+           )`,
         [booking.id, userId]
       );
 
@@ -303,6 +297,7 @@ class Booking {
       const bookingRes = await client.query(
         `SELECT b.*,
                 t.departure_time,
+                t.status AS trip_status,
                 r.name AS route_name,
                 r.single_trip_fare,
                 r.free_cancel_minutes,
@@ -321,6 +316,7 @@ class Booking {
           const adminRes = await client.query(
             `SELECT b.*,
                     t.departure_time,
+                    t.status AS trip_status,
                     r.name AS route_name,
                     r.single_trip_fare,
                     r.free_cancel_minutes,
@@ -341,11 +337,16 @@ class Booking {
       }
       const b = bookingRes.rows[0];
 
-      if (b.status === 'cancelled' || b.status === 'no_show' || b.status === 'checked_in') {
-        throw new Error(`Booking cannot be cancelled (status: ${b.status})`);
+      if (b.status === 'cancelled' || b.status === 'no_show' || b.status === 'checked_in' || b.is_rfid_scanned === true) {
+        throw new Error(`Booking cannot be cancelled (status: ${b.status}, scanned: ${b.is_rfid_scanned})`);
       }
       if (b.status !== 'confirmed') {
         throw new Error('Booking cannot be cancelled');
+      }
+
+      // ── Block cancellation once trip is in progress (non-admins) ─────────
+      if (b.trip_status === 'in_progress' && !isEmergencyAdmin) {
+        throw new Error('Cannot cancel — the bus is already on the road.');
       }
 
       const now = new Date();
@@ -374,29 +375,19 @@ class Booking {
       }
 
       // ── Refund wallet (within same transaction!) ──────────────────────
+      // The full fare was already deducted at booking time.
+      // On emergency cancellation: refundAmount = fare - penalty (student keeps the penalty).
+      // We simply refund the reduced amount — NO additional penalty deduction needed.
       if (refundAmount > 0) {
         await Wallet.updateBalance(
           b.user_id,
           refundAmount,
-          `Refund for cancelled trip (#${b.trip_id})`,
+          cancellationFee > 0
+            ? `Partial refund for cancelled trip (#${b.trip_id}) — ${cancellationFee} BDT emergency penalty kept`
+            : `Refund for cancelled trip (#${b.trip_id})`,
           b.id,
           client
         );
-      }
-      if (cancellationFee > 0 && refundAmount < Number(b.fare_amount)) {
-        // The cancellation fee is the part we *don't* refund; record it as a penalty tx
-        try {
-          await Wallet.updateBalance(
-            b.user_id,
-            -cancellationFee,
-            `Emergency cancellation penalty (trip #${b.trip_id})`,
-            b.id,
-            client
-          );
-        } catch (_e) {
-          // Balance already has the fare held so net is positive; ignore
-          console.warn('⚠️ Penalty deduction note:', _e.message);
-        }
       }
 
       await client.query(
@@ -513,7 +504,9 @@ class Booking {
         `UPDATE bookings
          SET is_rfid_scanned = TRUE,
              scanned_at = NOW(),
-             scan_device = $1
+             scan_device = $1,
+             status = 'checked_in',
+             checked_in_at = NOW()
          WHERE id = $2`,
         [device, booking.id]
       );
@@ -521,8 +514,10 @@ class Booking {
       await client.query('COMMIT');
       return {
         ...booking,
+        status: 'checked_in',
         is_rfid_scanned: true,
         scanned_at: new Date(),
+        checked_in_at: new Date(),
       };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -534,9 +529,15 @@ class Booking {
 
   static async findActiveBookingByRFIDAndTrip(rfidId, tripId) {
     const result = await pool.query(
-      `SELECT b.*, u.id AS user_id, u.name, u.student_id, u.email, u.rfid_id
+      `SELECT b.*, u.id AS user_id, u.name, 
+              COALESCE(s.student_id, m.manager_id, ba.bus_attendant_id, pa.parking_attendant_id) AS student_id,
+              u.email, u.rfid_id
        FROM bookings b
        JOIN users u ON b.user_id = u.id
+       LEFT JOIN students s ON s.user_id = u.id
+       LEFT JOIN managers m ON m.user_id = u.id
+       LEFT JOIN bus_attendants ba ON ba.user_id = u.id
+       LEFT JOIN parking_attendants pa ON pa.user_id = u.id
        WHERE u.rfid_id = $1 AND b.trip_id = $2
          AND b.status IN ('confirmed', 'checked_in')
        ORDER BY b.id DESC
@@ -551,7 +552,7 @@ class Booking {
     try {
       await client.query('BEGIN');
 
-      const userResult = await client.query('SELECT id FROM users WHERE student_id = $1', [studentId]);
+      const userResult = await client.query('SELECT user_id AS id FROM students WHERE student_id = $1', [studentId]);
       if (userResult.rows.length === 0) throw new Error('Student not found');
       const userId = userResult.rows[0].id;
 
@@ -595,13 +596,17 @@ class Booking {
     const result = await pool.query(
       `SELECT b.*,
               u.name,
-              u.student_id,
+              COALESCE(s.student_id, m.manager_id, ba.bus_attendant_id, pa.parking_attendant_id) AS student_id,
               u.email,
               u.rfid_id,
               u.department,
               CASE WHEN b.is_rfid_scanned THEN 'Scanned' ELSE 'Not Scanned' END AS rfid_status_label
        FROM bookings b
        JOIN users u ON b.user_id = u.id
+       LEFT JOIN students s ON s.user_id = u.id
+       LEFT JOIN managers m ON m.user_id = u.id
+       LEFT JOIN bus_attendants ba ON ba.user_id = u.id
+       LEFT JOIN parking_attendants pa ON pa.user_id = u.id
        WHERE b.trip_id = $1
        ORDER BY
          b.is_standby ASC,
@@ -653,13 +658,13 @@ class Booking {
     }
   }
 
-  static async markNoShowsForTrip(tripId) {
+  static async markNoShowsForTrip(tripId, forceNow = false) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       const tripCheck = await client.query(
-        `SELECT t.*, r.no_show_grace_minutes, r.single_trip_fare
+        `SELECT t.*, r.no_show_grace_minutes, r.single_trip_fare, r.emergency_cancel_penalty
          FROM trips t
          JOIN routes r ON t.route_id = r.id
          WHERE t.id = $1
@@ -681,7 +686,7 @@ class Booking {
         new Date(trip.departure_time).getTime() + graceMinutes * 60 * 1000
       );
 
-      if (now < noShowCutoff) {
+      if (!forceNow && now < noShowCutoff) {
         return {
           processed: 0,
           skipped: 'not_yet_departed',
@@ -709,24 +714,39 @@ class Booking {
           continue;
         }
 
-        // ── Fare already charged at BOOKING TIME ────────────────────────
-        // We just mark no-show status, free up seat, and bump no_show_count.
+        // ── No-show penalty ─────────────────────────────────────────────
+        // Fare was already charged at booking time and is NOT refunded.
+        // Additionally, deduct an extra no-show penalty from the wallet.
+        const noShowPenalty = Number(trip.emergency_cancel_penalty) || 50.0;
+
         await client.query(
           `UPDATE bookings
            SET status = 'no_show',
                no_show_processed = TRUE,
                penalty_amount = $1
            WHERE id = $2`,
-          [Number(b.fare_amount || trip.single_trip_fare), b.id]
+          [noShowPenalty, b.id]
         );
 
+        // Deduct no-show penalty from wallet (best-effort — don't fail the sweep)
+        try {
+          await Wallet.updateBalance(
+            b.user_id,
+            -noShowPenalty,
+            `No-show penalty — trip #${tripId} (RFID not scanned within grace period)`,
+            b.id,
+            client
+          );
+        } catch (walletErr) {
+          console.warn(`⚠️ Could not deduct no-show penalty for booking #${b.id}:`, walletErr.message);
+        }
+
         await client.query(
-          `UPDATE users SET no_show_count = no_show_count + 1 WHERE id = $1`,
+          `UPDATE students SET no_show_count = no_show_count + 1 WHERE user_id = $1`,
           [b.user_id]
         );
 
-        // Seat can be returned to pool; the trip is in progress anyway but
-        // we keep data consistent.
+        // Return seat to pool for consistency
         await client.query(
           `UPDATE trips SET available_seats = available_seats + 1 WHERE id = $1`,
           [tripId]

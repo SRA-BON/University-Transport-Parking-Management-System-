@@ -51,7 +51,7 @@ api.interceptors.response.use(
       try {
         localStorage.removeItem('userToken');
         localStorage.removeItem('userData');
-        if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
+        if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register') && !window.location.pathname.startsWith('/forgot-password') && !window.location.pathname.startsWith('/reset-password')) {
           window.location.href = '/login';
         }
       } catch (e) {

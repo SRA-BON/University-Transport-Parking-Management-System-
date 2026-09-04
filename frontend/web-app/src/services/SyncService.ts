@@ -2,7 +2,7 @@ import api from './api';
 
 export interface OfflineScan {
   id: string;
-  type: 'bus' | 'parking_entry' | 'parking_exit';
+  type: 'bus' | 'parking_scan' | 'parking_entry' | 'parking_exit';
   rfid_id: string;
   trip_id?: number;
   timestamp: string;
@@ -53,6 +53,8 @@ class SyncService {
       try {
         if (scan.type === 'bus') {
           await api.post('/bookings/rfid/gate-scan', { rfid_id: scan.rfid_id, trip_id: scan.trip_id, device: 'offline_sync' });
+        } else if (scan.type === 'parking_scan') {
+          await api.post('/rfid/parking/scan', { rfid_id: scan.rfid_id, device: 'offline_sync' });
         } else if (scan.type === 'parking_entry') {
           await api.post('/rfid/parking/entry', { rfid_id: scan.rfid_id, device: 'offline_sync' });
         } else if (scan.type === 'parking_exit') {

@@ -3,12 +3,13 @@ import { create } from 'zustand';
 export interface User {
   id: number;
   name: string;
-  student_id: string;
+  student_id: string | null;
   email: string;
   role: string;
   no_show_count: number;
   rfid_id?: string | null;
   department?: string | null;
+  display_id?: string | null;
 }
 
 interface AuthState {

@@ -8,7 +8,13 @@ const authMiddleware = require('../middleware/authMiddleware');
 router.post('/register', AuthController.register);
 router.post('/login', AuthController.login);
 router.post('/google', AuthController.googleAuth);
+
+// Link-based password reset flow (current flow)
 router.post('/forgot-password', AuthController.forgotPassword);
+router.get('/reset/:token', AuthController.validateResetToken);
+router.post('/set-new-password', AuthController.setNewPassword);
+
+// Legacy OTP-based password reset endpoints (kept for backward compatibility)
 router.post('/verify-otp', AuthController.verifyOtp);
 router.post('/reset-password', AuthController.resetPassword);
 

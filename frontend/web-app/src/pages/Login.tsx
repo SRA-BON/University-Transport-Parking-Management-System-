@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CredentialResponse, GoogleLogin } from '@react-oauth/google';
 import { useAuthStore } from '../store/authStore';
@@ -9,8 +9,26 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
   const signIn = useAuthStore((s) => s.signIn);
   const navigate = useNavigate();
+  const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', 'light');
+    return () => { document.documentElement.removeAttribute('data-theme'); };
+  }, []);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth <= 520);
+    check();
+    window.addEventListener('resize', check);
+    window.addEventListener('orientationchange', check);
+    return () => {
+      window.removeEventListener('resize', check);
+      window.removeEventListener('orientationchange', check);
+    };
+  }, []);
 
   const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,16 +87,23 @@ export default function Login() {
   };
 
   return (
-    <div style={styles.root}>
-      <div style={styles.card}>
+    <div style={getRootStyles(isMobile)}>
+      <div style={getCardStyles(isMobile)}>
         <div style={styles.header}>
-          <img 
-            src="https://www.bracu.ac.bd/sites/default/files/resources/media/bracu_logo_12-0-2022.png" 
-            alt="BRACU Logo" 
-            style={{ width: '180px', marginBottom: '16px' }}
+          <img
+            src="https://www.bracu.ac.bd/sites/default/files/resources/media/bracu_logo_12-0-2022.png"
+            alt="BRACU Logo"
+            style={{
+              width: isMobile ? '140px' : '180px',
+              maxWidth: '100%',
+              height: 'auto',
+              marginBottom: isMobile ? '12px' : '16px',
+            }}
           />
-          <h1 style={styles.title}>Welcome Back</h1>
-          <p style={styles.subtitle}>Sign in to your BRACU Transport account</p>
+          <h1 style={{ ...styles.title, ...(isMobile ? { fontSize: '22px' } : {}) }}>Welcome Back</h1>
+          <p style={{ ...styles.subtitle, ...(isMobile ? { fontSize: '13px' } : {}) }}>
+            Sign in to your BRACU Safe Ride
+          </p>
         </div>
 
         <form onSubmit={handleManualLogin} style={styles.form}>
@@ -95,21 +120,31 @@ export default function Login() {
             disabled={loading}
           />
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <label style={styles.label}>Password</label>
-            <Link to="/forgot-password" style={{ ...styles.link, fontSize: '13px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <label style={{ ...styles.label, marginTop: 0 }}>Password</label>
+            <Link to="/forgot-password" style={{ ...styles.link, fontSize: isMobile ? '12px' : '13px' }}>
               Forgot Password?
             </Link>
           </div>
-          <input
-            style={styles.input}
-            type="password"
-            placeholder="Your password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            disabled={loading}
-          />
+          <div style={{ position: 'relative' }}>
+            <input
+              style={styles.input}
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              disabled={loading}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={styles.eyeBtn}
+              tabIndex={-1}
+            >
+              {showPassword ? '👁️' : '👁️‍🗨️'}
+            </button>
+          </div>
 
           <button type="submit" style={styles.primaryButton} disabled={loading}>
             {loading ? <div className="loading-spinner" /> : 'Sign In'}
@@ -122,22 +157,24 @@ export default function Login() {
           </div>
 
           <div style={styles.googleWrapper}>
-            <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={handleGoogleError}
-              theme="filled_blue"
-              shape="rectangular"
-              width="400"
-              text="continue_with"
-              useOneTap
-              auto_select={false}
-            />
+            <div style={{ width: '100%', maxWidth: isMobile ? '100%' : '400px', overflow: 'hidden' }}>
+              <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={handleGoogleError}
+                theme="filled_blue"
+                shape="rectangular"
+                width={isMobile ? undefined : 400}
+                text="continue_with"
+                useOneTap
+                auto_select={false}
+              />
+            </div>
           </div>
-          <p style={styles.googleHint}>
+          <p style={{ ...styles.googleHint, ...(isMobile ? { fontSize: '11px' } : {}) }}>
             Only <strong>@g.bracu.ac.bd</strong> emails are accepted for Google login
           </p>
 
-          <div style={styles.registerRow}>
+          <div style={{ ...styles.registerRow, ...(isMobile ? { marginTop: 8, fontSize: '13px' } : {}) }}>
             <span>Don&apos;t have an account?</span>{' '}
             <Link to="/register" style={styles.link}>
               Sign Up
@@ -149,37 +186,41 @@ export default function Login() {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    minHeight: '100vh',
+function getRootStyles(isMobile: boolean): React.CSSProperties {
+  return {
+    minHeight: '100dvh',
     background: 'var(--bg-primary)',
-    display: 'grid',
-    placeItems: 'center',
-    padding: '24px 16px',
-  },
-  card: {
+    display: 'flex',
+    alignItems: isMobile ? 'center' : 'flex-start',
+    justifyContent: 'center',
+    padding: isMobile ? '16px 10px' : '24px 16px',
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    boxSizing: 'border-box' as const,
     width: '100%',
-    maxWidth: 440,
+  };
+}
+
+function getCardStyles(isMobile: boolean): React.CSSProperties {
+  return {
+    width: '100%',
+    maxWidth: isMobile ? '100%' : 440,
     background: 'var(--bg-card)',
     border: '1px solid var(--border-color)',
-    borderRadius: 16,
-    padding: '32px 24px',
-    boxShadow: '0 10px 40px -12px rgba(108, 99, 255, 0.18)',
-  },
+    borderRadius: isMobile ? 2 : 16,
+    padding: isMobile ? '20px 16px' : '32px 24px',
+    boxShadow: isMobile
+      ? '0 6px 24px -8px rgba(108, 99, 255, 0.18)'
+      : '0 10px 40px -12px rgba(108, 99, 255, 0.18)',
+    boxSizing: 'border-box' as const,
+    margin: 'auto',
+  };
+}
+
+const styles: Record<string, React.CSSProperties> = {
   header: {
     textAlign: 'center',
-    marginBottom: 28,
-  },
-  logoBadge: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    display: 'grid',
-    placeItems: 'center',
-    fontSize: 28,
-    background: 'linear-gradient(135deg, var(--primary-color) 0%, #8B83FF 100%)',
-    margin: '0 auto 16px',
-    color: '#fff',
+    marginBottom: 20,
   },
   title: {
     fontSize: 'clamp(22px, 5vw, 28px)',
@@ -195,6 +236,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 12,
+    width: '100%',
+    boxSizing: 'border-box' as const,
   },
   errorBox: {
     background: 'var(--danger-bg)',
@@ -207,6 +250,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 4,
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
+    boxSizing: 'border-box' as const,
   },
   label: {
     fontSize: 13,
@@ -214,6 +258,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     marginTop: 4,
     marginBottom: -4,
+    display: 'block',
   },
   input: {
     width: '100%',
@@ -224,6 +269,21 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 15,
     color: 'var(--text-primary)',
     transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+    paddingRight: 40,
+    boxSizing: 'border-box' as const,
+    minWidth: 0,
+  },
+  eyeBtn: {
+    position: 'absolute',
+    right: 12,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: 16,
+    color: 'var(--text-secondary)',
+    padding: 4,
   },
   primaryButton: {
     width: '100%',
@@ -240,20 +300,24 @@ const styles: Record<string, React.CSSProperties> = {
     placeItems: 'center',
     minHeight: 46,
     boxShadow: '0 4px 14px -4px rgba(108, 99, 255, 0.5)',
+    boxSizing: 'border-box' as const,
   },
   dividerRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 14,
     margin: '16px 0 4px',
+    minWidth: 0,
   },
-  divider: { flex: 1, height: 1, background: 'var(--border-color)' },
-  dividerText: { fontSize: 13, color: 'var(--text-tertiary)', fontWeight: 500 },
+  divider: { flex: 1, height: 1, background: 'var(--border-color)', minWidth: 0 },
+  dividerText: { fontSize: 13, color: 'var(--text-tertiary)', fontWeight: 500, flexShrink: 0 },
   googleWrapper: {
     width: '100%',
     display: 'flex',
     justifyContent: 'center',
     marginTop: 6,
+    boxSizing: 'border-box' as const,
+    minWidth: 0,
   },
   googleHint: {
     textAlign: 'center',

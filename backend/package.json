@@ -5,7 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "start:prod": "NODE_ENV=production node src/server.js",
     "dev": "nodemon src/server.js",
+    "doctor": "node -e \"require('dotenv').config();const p=require('./src/config/db');p.query('SELECT 1 as ok').then(r=>{console.log('[Doctor] DB OK');return p.end();}).catch(e=>{console.error('[Doctor] DB FAIL:',e.message);process.exit(1);});\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -13,14 +15,15 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.79.1",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "firebase-admin": "^14.2.0",
     "google-auth-library": "^10.9.0",
+    "helmet": "^8.3.0",
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^9.0.5",

@@ -19,6 +19,21 @@ class AuthController {
       
       const { name, studentId, student_id, email, password, role, rfidId, department } = req.body;
       const studentIdValue = studentId || student_id;
+
+      const finalRole = role || 'student';
+      if (finalRole === 'student' && studentIdValue) {
+        const clean = String(studentIdValue).trim();
+        if (!/^(22|23)\d{6}$/.test(clean)) {
+          return res.status(400).json({ error: 'Student ID must be 8 digits starting with 22 or 23 (e.g. 22201297)' });
+        }
+      }
+      if (['admin', 'manager', 'bus_attendant', 'parking_attendant'].includes(finalRole)) {
+        const pool = require('../config/db');
+        const existingCheck = await pool.query('SELECT COUNT(*)::int as cnt FROM users WHERE role = $1', [finalRole]);
+        if (finalRole === 'admin' && existingCheck.rows[0].cnt >= 1) {
+          return res.status(400).json({ error: 'System supports only one admin account' });
+        }
+      }
       
       console.log('🔍 Checking for existing user with email:', email);
       const existingUser = await User.findByEmail(email);
@@ -249,7 +264,6 @@ class AuthController {
       }
 
       try {
-        const pool = require('../config/db');
         const wCheck = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [user.id]);
         if (wCheck.rows.length === 0) {
           await pool.query('INSERT INTO wallets (user_id, balance) VALUES ($1, 0)', [user.id]);
@@ -352,56 +366,207 @@ class AuthController {
   static async forgotPassword(req, res) {
     try {
       const { email } = req.body;
-      const user = await User.findByEmail(email);
+      if (!email || !email.trim()) {
+        return res.status(400).json({ error: 'Email address is required.' });
+      }
+
+      const user = await User.findByEmail(email.trim().toLowerCase());
       if (!user) {
-        return res.status(404).json({ error: 'User not found with this email' });
+        // Do not reveal whether email exists in system for security, but for dev UX we can return success silently
+        console.log('[Auth] Forgot password requested for non-existent email:', email);
+        return res.json({ message: 'If your email is registered, you will receive a password reset link shortly.' });
       }
 
       if (user.is_active === false) {
-        return res.status(403).json({ error: 'Account is deactivated.' });
+        return res.status(403).json({ error: 'Account is deactivated. Please contact administration.' });
       }
 
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = new Date(Date.now() + 10 * 60000); // 10 minutes from now
-
-      // Invalidate existing unused OTPs
-      await pool.query('UPDATE password_resets SET is_used = TRUE WHERE user_id = $1 AND is_used = FALSE', [user.id]);
-
-      await pool.query(
-        'INSERT INTO password_resets (user_id, otp_code, expires_at) VALUES ($1, $2, $3)',
-        [user.id, otp, expiresAt]
+      // 1. Generate a signed JWT reset token (15 minute expiry)
+      const resetToken = jwt.sign(
+        { userId: user.id, purpose: 'password_reset', email: user.email },
+        process.env.JWT_SECRET,
+        { expiresIn: '15m' }
       );
 
-      const emailSent = await EmailService.sendOTP(email, otp);
-      if (!emailSent) {
-        return res.status(500).json({ error: 'Failed to send OTP email. Please try again later.' });
+      // 2. Persist token in password_resets table so we can invalidate single-use
+      try {
+        await pool.query('UPDATE password_resets SET is_used = TRUE WHERE user_id = $1 AND is_used = FALSE', [user.id]);
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+        await pool.query(
+          `INSERT INTO password_resets (user_id, otp_code, reset_token, expires_at)
+           VALUES ($1, $2, $3, $4)`,
+          [user.id, 'LINK', resetToken, expiresAt]
+        );
+      } catch (dbErr) {
+        console.warn('[Auth] Could not persist reset token in DB (column may not exist yet). Proceeding with JWT-only validation:', dbErr.message);
       }
 
-      res.json({ message: 'OTP sent to your email successfully.' });
+      // 3. Build the reset link pointing to the frontend Set New Password page
+      //    Prefer the origin reported by the user's browser (when provided) so the link
+      //    lands on the exact port they are using (5173 / 5174 / 5177 ...).
+      const fallbackFrontend = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const requestedOrigin = (req.body && typeof req.body.frontendOrigin === 'string' && req.body.frontendOrigin.trim()) ? req.body.frontendOrigin.trim() : null;
+      let frontendUrl = fallbackFrontend.replace(/\/+$/, '');
+      if (requestedOrigin) {
+        try {
+          const originUrl = new URL(requestedOrigin.replace(/\/+$/, ''));
+          const allowedHostnames = ['localhost', '127.0.0.1'];
+          if (allowedHostnames.includes(originUrl.hostname) || originUrl.hostname.endsWith('.local') || originUrl.hostname.endsWith('.bracu.ac.bd')) {
+            frontendUrl = originUrl.origin;
+          }
+        } catch (_) { /* ignore malformed origin and fall back to env */ }
+      }
+      const resetLink = `${frontendUrl}/reset-password/${resetToken}`;
+
+      // 4. Send email
+      const emailSent = await EmailService.sendPasswordResetLink(user.email, resetLink);
+      if (!emailSent) {
+        return res.status(500).json({ error: 'Failed to send password reset email. Please check SMTP configuration or try again later.' });
+      }
+
+      console.log(`[Auth] Password reset link sent to ${user.email}. Token length: ${resetToken.length}. Link expires in 15 min.`);
+      res.json({ message: 'If your email is registered, you will receive a password reset link shortly.' });
     } catch (err) {
-      console.error('Forgot Password Error:', err);
-      res.status(500).json({ error: 'Failed to process request' });
+      console.error('[Auth] Forgot Password Error:', err);
+      res.status(500).json({ error: 'Failed to process password reset request.' });
     }
   }
 
+  /**
+   * Validate the reset token (called when the user opens the reset link in their browser)
+   * Returns the user's display name/email so the page can greet them, or an error if invalid.
+   */
+  static async validateResetToken(req, res) {
+    try {
+      const { token } = req.params;
+      if (!token) {
+        return res.status(400).json({ error: 'Reset token is missing.' });
+      }
+
+      let decoded;
+      try {
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
+      } catch (jwtErr) {
+        const msg = jwtErr.name === 'TokenExpiredError'
+          ? 'This password reset link has expired. Please request a new one.'
+          : 'Invalid or corrupted password reset link.';
+        return res.status(400).json({ error: msg, code: jwtErr.name });
+      }
+
+      if (!decoded || decoded.purpose !== 'password_reset' || !decoded.userId) {
+        return res.status(400).json({ error: 'This reset link is not valid for password reset.' });
+      }
+
+      const user = await User.findById(decoded.userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User account no longer exists.' });
+      }
+      if (user.is_active === false) {
+        return res.status(403).json({ error: 'Account is deactivated. Please contact administration.' });
+      }
+
+      // Optional: check DB if this token was already used
+      try {
+        const dbCheck = await pool.query(
+          'SELECT is_used FROM password_resets WHERE reset_token = $1 ORDER BY created_at DESC LIMIT 1',
+          [token]
+        );
+        if (dbCheck.rows.length > 0 && dbCheck.rows[0].is_used === true) {
+          return res.status(400).json({ error: 'This password reset link has already been used.' });
+        }
+      } catch (_) { /* DB column may not exist yet; JWT expiry is sufficient */ }
+
+      res.json({
+        valid: true,
+        email: user.email,
+        name: user.name,
+      });
+    } catch (err) {
+      console.error('[Auth] Validate Reset Token Error:', err);
+      res.status(500).json({ error: 'Failed to validate reset token.' });
+    }
+  }
+
+  /**
+   * Apply a new password using a valid reset token (single-use).
+   */
+  static async setNewPassword(req, res) {
+    try {
+      const { token, newPassword } = req.body;
+      if (!token) {
+        return res.status(400).json({ error: 'Reset token is required.' });
+      }
+      if (!newPassword || newPassword.length < 6) {
+        return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+      }
+
+      let decoded;
+      try {
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
+      } catch (jwtErr) {
+        const msg = jwtErr.name === 'TokenExpiredError'
+          ? 'This password reset link has expired. Please request a new one.'
+          : 'Invalid or corrupted password reset link.';
+        return res.status(400).json({ error: msg });
+      }
+
+      if (!decoded || decoded.purpose !== 'password_reset' || !decoded.userId) {
+        return res.status(400).json({ error: 'Invalid reset token purpose.' });
+      }
+
+      const user = await User.findById(decoded.userId);
+      if (!user) return res.status(404).json({ error: 'User not found.' });
+      if (user.is_active === false) return res.status(403).json({ error: 'Account is deactivated.' });
+
+      // Single-use check via DB
+      try {
+        const dbCheck = await pool.query(
+          'SELECT id, is_used FROM password_resets WHERE reset_token = $1 ORDER BY created_at DESC LIMIT 1',
+          [token]
+        );
+        if (dbCheck.rows.length > 0 && dbCheck.rows[0].is_used === true) {
+          return res.status(400).json({ error: 'This password reset link has already been used.' });
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, user.id]);
+
+        if (dbCheck.rows.length > 0) {
+          await pool.query('UPDATE password_resets SET is_used = TRUE WHERE id = $1', [dbCheck.rows[0].id]);
+        } else {
+          // Fallback: mark ALL outstanding tokens for this user as used
+          await pool.query('UPDATE password_resets SET is_used = TRUE WHERE user_id = $1 AND is_used = FALSE', [user.id]);
+        }
+      } catch (dbErr) {
+        console.warn('[Auth] DB-backed single-use check skipped (column may be missing), applying password update anyway:', dbErr.message);
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, user.id]);
+      }
+
+      console.log(`[Auth] Password successfully reset for user ${user.id} (${user.email})`);
+      res.json({ message: 'Password reset successfully. You can now log in with your new password.' });
+    } catch (err) {
+      console.error('[Auth] Set New Password Error:', err);
+      res.status(500).json({ error: 'Failed to reset password.' });
+    }
+  }
+
+  // Legacy OTP endpoints (kept for backward compatibility; new flow uses link tokens above)
   static async verifyOtp(req, res) {
     try {
       const { email, otp } = req.body;
       const user = await User.findByEmail(email);
       if (!user) return res.status(404).json({ error: 'User not found' });
-
       const result = await pool.query(
         'SELECT * FROM password_resets WHERE user_id = $1 AND otp_code = $2 AND is_used = FALSE AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
         [user.id, otp]
       );
-
       if (result.rows.length === 0) {
         return res.status(400).json({ error: 'Invalid or expired OTP.' });
       }
-
       res.json({ message: 'OTP verified successfully.' });
     } catch (err) {
-      console.error('Verify OTP Error:', err);
+      console.error('[Auth] Verify OTP Error:', err);
       res.status(500).json({ error: 'Failed to verify OTP' });
     }
   }
@@ -411,23 +576,19 @@ class AuthController {
       const { email, otp, newPassword } = req.body;
       const user = await User.findByEmail(email);
       if (!user) return res.status(404).json({ error: 'User not found' });
-
       const result = await pool.query(
         'SELECT * FROM password_resets WHERE user_id = $1 AND otp_code = $2 AND is_used = FALSE AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
         [user.id, otp]
       );
-
       if (result.rows.length === 0) {
         return res.status(400).json({ error: 'Invalid or expired OTP.' });
       }
-
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, user.id]);
       await pool.query('UPDATE password_resets SET is_used = TRUE WHERE id = $1', [result.rows[0].id]);
-
       res.json({ message: 'Password reset successfully. You can now log in.' });
     } catch (err) {
-      console.error('Reset Password Error:', err);
+      console.error('[Auth] Reset Password (legacy OTP) Error:', err);
       res.status(500).json({ error: 'Failed to reset password' });
     }
   }

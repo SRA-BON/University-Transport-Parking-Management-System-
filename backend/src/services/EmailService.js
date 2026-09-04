@@ -79,8 +79,8 @@ class EmailService {
     try {
       await this._init();
       if (!this.transporter) {
-        console.error('❌ EmailService: Transporter not available, cannot send OTP');
-        console.log(`🔑 Fallback: Your OTP is ${otp} (expires in 10 minutes)`);
+        console.error('[Email] Transporter not available, cannot send OTP');
+        console.log(`[Email] Fallback OTP for ${to}: ${otp} (expires in 10 minutes)`);
         return false;
       }
 
@@ -88,57 +88,98 @@ class EmailService {
         from: `"${this.senderName}" <${this.senderEmail}>`,
         to: to,
         subject: 'Password Reset OTP — BRACU Transport System',
-        text: `Your OTP for password reset is: ${otp}. It will expire in 10 minutes.
-
-If you didn't request this, you can safely ignore this email.
-
-— BRACU Transport System`,
+        text: `Your OTP for password reset is: ${otp}. It will expire in 10 minutes.\n\nIf you didn't request this, you can safely ignore this email.\n\n— BRACU Transport System`,
         html: `
           <div style="font-family: Arial, Helvetica, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; background: #ffffff; border-radius: 12px; border: 1px solid #eaeaea;">
             <div style="text-align: center; margin-bottom: 20px;">
               <h2 style="margin: 0; color: #6C63FF;">BRACU Transport System</h2>
               <p style="color: #666; margin-top: 8px; font-size: 14px;">Password Reset Request</p>
             </div>
-
-            <p style="font-size: 15px; color: #333; line-height: 1.6;">
-              Hi there,
-            </p>
-            <p style="font-size: 15px; color: #333; line-height: 1.6;">
-              You have requested to reset your password. Use the OTP below to continue:
-            </p>
-
+            <p style="font-size: 15px; color: #333; line-height: 1.6;">Hi there,</p>
+            <p style="font-size: 15px; color: #333; line-height: 1.6;">You have requested to reset your password. Use the OTP below to continue:</p>
             <div style="text-align: center; margin: 28px 0;">
-              <span style="display: inline-block; font-size: 30px; font-weight: 800; letter-spacing: 8px; padding: 14px 32px; background: #F3F1FF; color: #6C63FF; border-radius: 10px; border: 2px dashed #6C63FF;">
-                ${otp}
-              </span>
+              <span style="display: inline-block; font-size: 30px; font-weight: 800; letter-spacing: 8px; padding: 14px 32px; background: #F3F1FF; color: #6C63FF; border-radius: 10px; border: 2px dashed #6C63FF;">${otp}</span>
+            </div>
+            <p style="font-size: 14px; color: #555; line-height: 1.6;">⏱️ This code will expire in <strong>10 minutes</strong>.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #999; line-height: 1.5;">If you didn't request this password reset, you can safely ignore this email. Your account remains secure.</p>
+          </div>
+        `,
+      });
+
+      console.log('[Email] OTP email sent:', info.messageId, 'to', to);
+      if (this._isEthereal) {
+        const previewUrl = nodemailer.getTestMessageUrl(info);
+        console.log('[Email] Ethereal preview:', previewUrl);
+      }
+      return true;
+    } catch (error) {
+      console.error('[Email] Error sending OTP email:', error.message);
+      console.log(`[Email] Fallback OTP for ${to}: ${otp} (expires in 10 minutes)`);
+      return false;
+    }
+  }
+
+  async sendPasswordResetLink(to, resetLink) {
+    try {
+      await this._init();
+      if (!this.transporter) {
+        console.error('[Email] Transporter not available, cannot send reset link');
+        console.log(`[Email] Fallback reset link for ${to}: ${resetLink}`);
+        return false;
+      }
+
+      const info = await this.transporter.sendMail({
+        from: `"${this.senderName}" <${this.senderEmail}>`,
+        to: to,
+        subject: 'Password Reset Link — BRACU Transport System',
+        text: `You have requested to reset your password.\n\nClick the link below to set a new password:\n${resetLink}\n\nThis link will expire in 15 minutes.\n\nIf you didn't request this, you can safely ignore this email.\n\n— BRACU Transport System`,
+        html: `
+          <div style="font-family: Arial, Helvetica, sans-serif; max-width: 540px; margin: 0 auto; padding: 28px; background: #ffffff; border-radius: 12px; border: 1px solid #eaeaea;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <h2 style="margin: 0; color: #6C63FF; font-size: 22px;">BRACU Transport System</h2>
+              <p style="color: #666; margin-top: 8px; font-size: 14px;">Reset Your Password</p>
             </div>
 
-            <p style="font-size: 14px; color: #555; line-height: 1.6;">
-              ⏱️ This code will expire in <strong>10 minutes</strong>.
+            <p style="font-size: 15px; color: #333; line-height: 1.6;">Hi there,</p>
+            <p style="font-size: 15px; color: #333; line-height: 1.6;">
+              We received a request to reset the password for your account. Click the button below to set a new password:
             </p>
 
-            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+            <div style="text-align: center; margin: 32px 0;">
+              <a href="${resetLink}" style="display: inline-block; padding: 14px 36px; background: linear-gradient(135deg, #6C63FF 0%, #4A3FFF 100%); color: #ffffff; text-decoration: none; border-radius: 10px; font-weight: 800; font-size: 15px; box-shadow: 0 6px 18px rgba(108, 99, 255, 0.35);">
+                Set New Password
+              </a>
+            </div>
 
-            <p style="font-size: 12px; color: #999; line-height: 1.5;">
-              If you didn't request this password reset, you can safely ignore this email. Your account remains secure.
+            <p style="font-size: 13px; color: #666; line-height: 1.6; word-break: break-all;">
+              If the button above doesn't work, copy and paste this URL into your browser:<br />
+              <a href="${resetLink}" style="color: #6C63FF;">${resetLink}</a>
+            </p>
+
+            <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+
+            <p style="font-size: 13px; color: #555; line-height: 1.5;">
+              ⏱️ This link will expire in <strong>15 minutes</strong>.
+            </p>
+
+            <p style="font-size: 12px; color: #999; line-height: 1.5; margin-top: 12px;">
+              If you didn't request this password reset, you can safely ignore this email. Your account remains secure and no changes have been made.
             </p>
           </div>
         `,
       });
 
-      console.log('✉️ Email sent successfully!');
-      console.log('   Message ID :', info.messageId);
-      console.log('   To         :', to);
+      console.log('[Email] Password reset link sent:', info.messageId, 'to', to);
       if (this._isEthereal) {
         const previewUrl = nodemailer.getTestMessageUrl(info);
-        console.log('🔗 Preview URL:', previewUrl);
-        console.log(`   (Login to https://ethereal.email with ${this._etherealUser} / ${this._etherealPass} if needed)`);
+        console.log('[Email] Ethereal preview:', previewUrl);
       }
       return true;
     } catch (error) {
-      console.error('❌ Error sending OTP email:', error.message);
-      if (error.stack) console.error('   Stack:', error.stack.split('\n').slice(0, 3).join('\n'));
-      console.log(`🔑 Fallback OTP for ${to}: ${otp} (expires in 10 minutes)`);
+      console.error('[Email] Error sending reset link email:', error.message);
+      if (error.stack) console.error('[Email] Stack:', error.stack.split('\n').slice(0, 3).join('\n'));
+      console.log(`[Email] Fallback reset link for ${to}: ${resetLink}`);
       return false;
     }
   }

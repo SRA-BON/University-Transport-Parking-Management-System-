@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
@@ -378,13 +378,13 @@ export default function ParkingProfile() {
             <div style={styles.statusGrid}>
               <StatusItem
                 icon="👤"
-                label="Student Name"
+                label={user?.role === 'student' ? 'Student Name' : 'Name'}
                 value={user?.name || '—'}
               />
               <StatusItem
                 icon="🎓"
-                label="Student ID"
-                value={user?.student_id || '—'}
+                label={user?.role === 'student' ? 'Student ID' : user?.role === 'manager' ? 'Manager ID' : user?.role === 'bus_attendant' ? 'Bus Attendant ID' : user?.role === 'parking_attendant' ? 'Parking Attendant ID' : 'ID'}
+                value={user?.display_id || user?.student_id || '—'}
               />
               <StatusItem
                 icon="🏛️"
@@ -420,7 +420,7 @@ export default function ParkingProfile() {
               <p style={styles.infoTitle}>How Parking Works</p>
               <ol style={styles.infoList}>
                 <li>Link your vehicle(s) on this page.</li>
-                <li>At the parking entrance, the system scans your Student ID card.</li>
+                <li>At the parking entrance, the system scans your ID card.</li>
                 <li>Your default vehicle will be used for entry.</li>
                 <li>You'll receive a 3-digit digital token.</li>
                 <li>At exit, the system scans your ID again — bill is auto-deducted.</li>

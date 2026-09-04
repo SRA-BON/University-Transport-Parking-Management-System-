@@ -7,11 +7,35 @@ let isFirebaseInitialized = false;
 
 if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
   try {
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY || '';
+    
+    // Debug what the string looks like
+    console.log('DEBUG FIREBASE KEY:', {
+      length: privateKey.length,
+      startsWith: privateKey.substring(0, 30),
+      endsWith: privateKey.substring(privateKey.length - 30),
+      includesLiteralSlashN: privateKey.includes('\\n'),
+      includesRealNewline: privateKey.includes('\n'),
+    });
+
+    privateKey = privateKey.replace(/\\n/g, '\n');
+    if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+      privateKey = privateKey.slice(1, -1).replace(/\\n/g, '\n');
+    }
+    if (privateKey.startsWith("'") && privateKey.endsWith("'")) {
+      privateKey = privateKey.slice(1, -1).replace(/\\n/g, '\n');
+    }
+
+    // Fix missing spaces around header if they got stripped
+    privateKey = privateKey.replace(/-----BEGIN PRIVATE KEY-----/g, '-----BEGIN PRIVATE KEY-----\n');
+    privateKey = privateKey.replace(/-----END PRIVATE KEY-----/g, '\n-----END PRIVATE KEY-----\n');
+    privateKey = privateKey.replace(/\n\n/g, '\n');
+
     initializeApp({
       credential: cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        privateKey: privateKey,
       }),
     });
     isFirebaseInitialized = true;
@@ -84,7 +108,7 @@ class NotificationService {
    * Predefined Notifications
    */
   static async notifyBookingConfirmed(userId, tripDetails) {
-    await this.sendToUser(userId, 'Booking Confirmed! ✅', `Your booking for ${tripDetails.route_name} at ${new Date(tripDetails.departure_time).toLocaleTimeString()} is confirmed.`);
+    await this.sendToUser(userId, 'Booking Confirmed! ✅', `Your booking for ${tripDetails.route_name} at ${new Date(tripDetails.departure_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })} is confirmed.`);
   }
 
   static async notifyBookingCancelled(userId, tripDetails, refundAmount) {
@@ -109,7 +133,7 @@ class NotificationService {
       [routeId]
     );
 
-    const formattedTime = new Date(departureTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const formattedTime = new Date(departureTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
     const message = `Hurry! Only ${remainingSeats} seats left on the ${formattedTime} ${routeName} trip.`;
 
     for (const row of usersRes.rows) {
@@ -123,6 +147,57 @@ class NotificationService {
       }
     }
   }
+
+  /**
+   * Send "Track yourself" push notification to users on a trip that is now in_progress.
+   * Includes a deep-link to the Google Maps tracking page.
+   */
+  static async notifyTripTracking(tripId, frontendBaseUrl) {
+    const baseUrl = frontendBaseUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
+
+    const tripRes = await pool.query(
+      `SELECT t.id, t.departure_time, r.name AS route_name, b.bus_number
+       FROM trips t
+       JOIN routes r ON t.route_id = r.id
+       JOIN buses b ON t.bus_id = b.id
+       WHERE t.id = $1`,
+      [tripId]
+    );
+    if (!tripRes.rows.length) return;
+    const trip = tripRes.rows[0];
+
+    const usersRes = await pool.query(
+      `SELECT DISTINCT b.user_id
+       FROM bookings b
+       WHERE b.trip_id = $1 AND b.status IN ('confirmed', 'checked_in')`,
+      [tripId]
+    );
+
+    const trackLink = `${baseUrl.replace(/\/$/, '')}/trip/${tripId}/track`;
+    const formattedTime = new Date(trip.departure_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const title = '🚌 Track Yourself - Trip Started';
+    const body = `Your ${trip.route_name} bus (${trip.bus_number}) has started at ${formattedTime}. Tap to track your journey live on Google Map.`;
+
+    for (const row of usersRes.rows) {
+      await this.sendToUser(row.user_id, title, body, {
+        type: 'trip_tracking',
+        tripId: String(tripId),
+        click_action: trackLink,
+        link: trackLink,
+      });
+    }
+
+    console.log(`📡 Trip tracking notifications dispatched for trip #${tripId} to ${usersRes.rows.length} user(s).`);
+  }
 }
+
+NotificationService.sendToUser = NotificationService.sendToUser.bind(NotificationService);
+NotificationService.notifyBookingConfirmed = NotificationService.notifyBookingConfirmed.bind(NotificationService);
+NotificationService.notifyBookingCancelled = NotificationService.notifyBookingCancelled.bind(NotificationService);
+NotificationService.notifyPaymentSuccess = NotificationService.notifyPaymentSuccess.bind(NotificationService);
+NotificationService.notifySeatAvailabilityDrop = NotificationService.notifySeatAvailabilityDrop.bind(NotificationService);
+NotificationService.notifyTripTracking = NotificationService.notifyTripTracking.bind(NotificationService);
+NotificationService.registerToken = NotificationService.registerToken.bind(NotificationService);
+NotificationService.trackFrequentRoute = NotificationService.trackFrequentRoute.bind(NotificationService);
 
 module.exports = NotificationService;

@@ -11,6 +11,7 @@ router.post('/', BookingController.createBooking);
 router.get('/', BookingController.getUserBookings);
 router.post('/checkin/student', BookingController.checkInByStudentId);
 router.post('/rfid/gate-scan', BookingController.rfidGateScan);
+router.post('/self-scan', BookingController.selfScan); // student self-boarding (bypass RFID hardware)
 router.get('/trip/:tripId', BookingController.getBookingsByTripId);
 router.get('/trip/:tripId/manifest', BookingController.getTripManifest);
 router.post('/trip/:tripId/run-no-show', BookingController.runNoShowForTrip);

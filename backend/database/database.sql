@@ -9,17 +9,45 @@
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
-    student_id VARCHAR(50) UNIQUE,
     email VARCHAR(100) UNIQUE NOT NULL,
     password_hash VARCHAR(255),
     google_id VARCHAR(255) UNIQUE,
-    role VARCHAR(20) DEFAULT 'student' CHECK (role IN ('student', 'super_admin', 'manager', 'bus_attendant', 'parking_attendant')),
-    no_show_count INTEGER DEFAULT 0,
+    role VARCHAR(20) DEFAULT 'student' CHECK (role IN ('student', 'admin', 'manager', 'bus_attendant', 'parking_attendant')),
     is_active BOOLEAN DEFAULT TRUE,
     rfid_id VARCHAR(100) UNIQUE,
     department VARCHAR(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 1a. Students (subtype of users)
+CREATE TABLE IF NOT EXISTS students (
+    student_id VARCHAR(50) PRIMARY KEY,  -- e.g. 22201297
+    no_show_count INTEGER DEFAULT 0,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 1b. Managers (subtype of users)
+CREATE TABLE IF NOT EXISTS managers (
+    manager_id VARCHAR(50) PRIMARY KEY,  -- e.g. 10001
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 1c. Bus Attendants (subtype of users)
+CREATE TABLE IF NOT EXISTS bus_attendants (
+    bus_attendant_id VARCHAR(50) PRIMARY KEY,  -- e.g. 20001
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 1d. Parking Attendants (subtype of users)
+CREATE TABLE IF NOT EXISTS parking_attendants (
+    parking_attendant_id VARCHAR(50) PRIMARY KEY,  -- e.g. 30001
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 1e. Admins (subtype of users — no custom ID, identified by role)
+CREATE TABLE IF NOT EXISTS admins (
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- 2. Wallets
@@ -74,7 +102,7 @@ CREATE TABLE IF NOT EXISTS trips (
     arrival_time TIMESTAMP,
     available_seats INTEGER NOT NULL,
     available_standby INTEGER NOT NULL,
-    status VARCHAR(20) DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'in_progress', 'completed', 'cancelled', 'delayed')),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'scheduled', 'in_progress', 'completed', 'cancelled', 'delayed')),
     no_show_processed BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -88,6 +116,8 @@ CREATE TABLE IF NOT EXISTS trip_stoppage_times (
     pickup_time TIME NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+
 
 -- 8. Bookings
 CREATE TABLE IF NOT EXISTS bookings (
@@ -117,10 +147,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
     wallet_id INTEGER NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
     amount DECIMAL(10, 2) NOT NULL,
-    type VARCHAR(20) NOT NULL CHECK (type IN ('recharge', 'payment', 'refund', 'penalty')),
+    type VARCHAR(20) NOT NULL,
     description TEXT,
     booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT transactions_type_check CHECK (type IN ('recharge', 'payment', 'refund', 'penalty', 'reversal', 'rejected'))
 );
 
 -- 10. Check-ins
@@ -183,9 +214,19 @@ CREATE TABLE IF NOT EXISTS pending_payments (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     transaction_id VARCHAR(255) UNIQUE NOT NULL,
     amount DECIMAL(10, 2) NOT NULL,
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
+    method VARCHAR(30) DEFAULT 'sslcommerz',
+    status VARCHAR(40) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled', 'pending_bkash_verification', 'reversed')),
     gateway_response JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Mutable admin-configurable system settings (key/value store).
+-- Admin can change these at runtime through the UI — no .env redeploy required.
+CREATE TABLE IF NOT EXISTS system_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -219,8 +260,35 @@ CREATE TABLE IF NOT EXISTS user_frequent_routes (
     UNIQUE(user_id, route_id)
 );
 
+-- 19. Trip Locations (for real-time bus tracking on Google Maps)
+CREATE TABLE IF NOT EXISTS trip_locations (
+    id SERIAL PRIMARY KEY,
+    trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    latitude DECIMAL(10, 8) NOT NULL,
+    longitude DECIMAL(11, 8) NOT NULL,
+    heading DECIMAL(5, 2),
+    speed_kmh DECIMAL(8, 2),
+    accuracy_meters DECIMAL(8, 2),
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 20. Active Trip Location Snapshot (latest position per trip — for fast lookups)
+CREATE TABLE IF NOT EXISTS trip_location_snapshots (
+    trip_id INTEGER PRIMARY KEY REFERENCES trips(id) ON DELETE CASCADE,
+    latitude DECIMAL(10, 8) NOT NULL,
+    longitude DECIMAL(11, 8) NOT NULL,
+    heading DECIMAL(5, 2),
+    speed_kmh DECIMAL(8, 2),
+    accuracy_meters DECIMAL(8, 2),
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 
 -- INDEXES
+
+CREATE INDEX IF NOT EXISTS idx_trip_locations_trip_time ON trip_locations(trip_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_users_rfid_id ON users(rfid_id);
 CREATE INDEX IF NOT EXISTS idx_trips_route_departure ON trips(route_id, departure_time);
@@ -283,13 +351,42 @@ CREATE TRIGGER update_parking_capacity_updated_at BEFORE UPDATE ON parking_capac
 DROP TRIGGER IF EXISTS update_pending_payments_updated_at ON pending_payments;
 CREATE TRIGGER update_pending_payments_updated_at BEFORE UPDATE ON pending_payments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_trip_locations_updated_at ON trip_locations;
+CREATE TRIGGER update_trip_locations_updated_at BEFORE UPDATE ON trip_locations FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Snapshot upsert: whenever a trip_location is inserted, also refresh its snapshot
+CREATE OR REPLACE FUNCTION upsert_trip_location_snapshot()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO trip_location_snapshots (trip_id, latitude, longitude, heading, speed_kmh, accuracy_meters, last_updated)
+    VALUES (NEW.trip_id, NEW.latitude, NEW.longitude, NEW.heading, NEW.speed_kmh, NEW.accuracy_meters, CURRENT_TIMESTAMP)
+    ON CONFLICT (trip_id) DO UPDATE SET
+        latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude,
+        heading = EXCLUDED.heading,
+        speed_kmh = EXCLUDED.speed_kmh,
+        accuracy_meters = EXCLUDED.accuracy_meters,
+        last_updated = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_upsert_trip_location_snapshot ON trip_locations;
+CREATE TRIGGER trg_upsert_trip_location_snapshot
+AFTER INSERT ON trip_locations
+FOR EACH ROW EXECUTE FUNCTION upsert_trip_location_snapshot();
+
 
 -- SEED DATA (all inserts use ON CONFLICT DO NOTHING - safe to re-run)
 
 -- Admin user (password: admin123)
-INSERT INTO users (name, student_id, email, password_hash, role, is_active)
-VALUES ('admin', 'ADMIN', 'admin@gmail.com', '$2b$10$Z8elUYYxqhtX6YZ4kgCmBewVA3eq5PywEkpfLhB0qB5xxa6bcH0CO', 'super_admin', TRUE)
+INSERT INTO users (name, email, password_hash, role, is_active)
+VALUES ('admin', 'admin@gmail.com', '$2b$10$Z8elUYYxqhtX6YZ4kgCmBewVA3eq5PywEkpfLhB0qB5xxa6bcH0CO', 'admin', TRUE)
 ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO admins (user_id)
+SELECT id FROM users WHERE email = 'admin@gmail.com'
+ON CONFLICT (user_id) DO NOTHING;
 
 INSERT INTO wallets (user_id, balance)
 SELECT id, 0 FROM users WHERE email = 'admin@gmail.com'
@@ -337,30 +434,41 @@ BEGIN
 
         -- Batch 1: 2:05 PM and 2:10 PM departures
         INSERT INTO trips (bus_id, route_id, departure_time, available_seats, available_standby, status) VALUES
-        (1,  1,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
-        (2,  3,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
-        (3,  4,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
-        (4,  5,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
-        (5,  7,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
-        (6,  8,  today + INTERVAL '14 hours 10 minutes', 40, 10, 'scheduled'),
-        (7,  9,  today + INTERVAL '14 hours 10 minutes', 40, 10, 'scheduled'),
-        (8,  10, today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled'),
-        (9,  12, today + INTERVAL '14 hours 5 minutes',  40, 10, 'scheduled');
+        (1,  1,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'pending'),
+        (2,  3,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'pending'),
+        (3,  4,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'pending'),
+        (4,  5,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'pending'),
+        (5,  7,  today + INTERVAL '14 hours 5 minutes',  40, 10, 'pending'),
+        (6,  8,  today + INTERVAL '14 hours 10 minutes', 40, 10, 'pending'),
+        (7,  9,  today + INTERVAL '14 hours 10 minutes', 40, 10, 'pending'),
+        (8,  10, today + INTERVAL '14 hours 5 minutes',  40, 10, 'pending'),
+        (9,  12, today + INTERVAL '14 hours 5 minutes',  40, 10, 'pending');
 
         -- Batch 2: 5:10 PM and 5:15 PM departures
         INSERT INTO trips (bus_id, route_id, departure_time, available_seats, available_standby, status) VALUES
-        (10, 1,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
-        (11, 2,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
-        (12, 3,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
-        (1,  4,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
-        (2,  5,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
-        (3,  6,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
-        (4,  7,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
-        (5,  8,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
-        (6,  9,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled'),
-        (7,  10, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
-        (8,  11, today + INTERVAL '17 hours 15 minutes', 40, 10, 'scheduled'),
-        (9,  12, today + INTERVAL '17 hours 10 minutes', 40, 10, 'scheduled');
+        (10, 1,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'pending'),
+        (11, 2,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'pending'),
+        (12, 3,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'pending'),
+        (1,  4,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'pending'),
+        (2,  5,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'pending'),
+        (3,  6,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'pending'),
+        (4,  7,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'pending'),
+        (5,  8,  today + INTERVAL '17 hours 15 minutes', 40, 10, 'pending'),
+        (6,  9,  today + INTERVAL '17 hours 10 minutes', 40, 10, 'pending'),
+        (7,  10, today + INTERVAL '17 hours 15 minutes', 40, 10, 'pending'),
+        (8,  11, today + INTERVAL '17 hours 15 minutes', 40, 10, 'pending'),
+        (9,  12, today + INTERVAL '17 hours 10 minutes', 40, 10, 'pending');
 
     END IF;
 END $$;
+
+-- 10. System Settings
+CREATE TABLE IF NOT EXISTS system_settings (
+    key VARCHAR(255) PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO system_settings (key, value) VALUES ('bkash.admin_personal_number', '01779033536') ON CONFLICT (key) DO NOTHING;
+-- We use 'bkash.admin_personal_number' internally, but if you need 'bkash_number' as well:
+INSERT INTO system_settings (key, value) VALUES ('bkash_number', '017XXXXXXXX') ON CONFLICT (key) DO NOTHING;

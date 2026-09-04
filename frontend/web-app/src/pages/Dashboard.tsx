@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 
@@ -15,12 +15,14 @@ interface Trip {
 export default function Dashboard() {
   const { user } = useAuthStore();
   const location = useLocation();
+  const navigate = useNavigate();
   const [balance, setBalance] = useState(0);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [paymentBanner, setPaymentBanner] = useState<{ type: 'success' | 'fail' | 'cancelled'; amount?: string } | null>(null);
+  const [activeTripId, setActiveTripId] = useState<number | null>(null);
 
-  const isManagement = ['manager', 'developer', 'admin', 'super_admin', 'bus_attendant', 'parking_attendant'].includes(user?.role || '');
+  const isManagement = ['admin', 'super_admin', 'manager', 'bus_attendant', 'parking_attendant'].includes(user?.role || '');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -35,8 +37,12 @@ export default function Dashboard() {
         });
         setTrips(merged);
       } else {
-        const res = await api.get('/wallets');
-        setBalance(parseFloat(res.data.balance) || 0);
+        const [walletRes, activeRes] = await Promise.all([
+          api.get('/wallets'),
+          api.get('/trips/me/active-trip').catch(() => ({ data: {} })),
+        ]);
+        setBalance(parseFloat(walletRes.data.balance) || 0);
+        setActiveTripId(activeRes.data.active_trip?.trip_id ?? null);
       }
     } catch (e) {
       console.error('Failed to load dashboard data', e);
@@ -114,7 +120,7 @@ export default function Dashboard() {
                 <div>
                   <div style={styles.tripRoute}>{t.route_name}</div>
                   <div style={styles.tripMeta}>🚍 {t.bus_number} · 🪑 {t.available_seats} seats</div>
-                  <div style={styles.tripTime}>{new Date(t.departure_time).toLocaleString()}</div>
+                  <div style={styles.tripTime}>{new Date(t.departure_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}</div>
                 </div>
                 <span style={{ ...styles.badge, background: statusColor(t.status) }}>{t.status}</span>
               </div>
@@ -130,10 +136,15 @@ export default function Dashboard() {
       <PaymentBanner banner={paymentBanner} onClose={() => setPaymentBanner(null)} />
       <header style={styles.headerRow}>
         <div>
-          <h2 style={styles.heading}>Hello, {user?.name || 'Student'} 👋</h2>
-          <p style={styles.subHeading}>
-            Student ID: <strong>{user?.student_id}</strong>
-          </p>
+          <h2 style={styles.heading}>Hello, {user?.name || 'Student'}</h2>
+          {user?.role !== 'admin' && (
+            <div style={styles.subHeading}>
+              {user?.role === 'student' ? 'Student ID' : 
+               user?.role === 'manager' ? 'Manager ID' : 
+               user?.role === 'bus_attendant' ? 'Bus Attendant ID' : 
+               user?.role === 'parking_attendant' ? 'Parking Attendant ID' : 'ID'}: <strong>{user?.display_id || user?.student_id}</strong>
+            </div>
+          )}
         </div>
         <button onClick={loadData} style={styles.refreshBtn}>🔄 Refresh</button>
       </header>
@@ -145,6 +156,24 @@ export default function Dashboard() {
         </div>
         <Link to="/recharge" style={styles.topUpBtn}>+ Top Up Wallet</Link>
       </div>
+
+      {activeTripId && (
+        <div style={styles.activeTripBanner} onClick={() => navigate(`/trip/${activeTripId}/track`)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1 }}>
+            <div style={styles.activeTripIcon}>
+              <div style={styles.busPulse} />
+              🚌
+            </div>
+            <div>
+              <p style={styles.activeTripTitle}>🟢 Your bus is now on the road!</p>
+              <p style={styles.activeTripSub}>Tap to track your journey live on Google Map</p>
+            </div>
+          </div>
+          <button style={styles.activeTripBtn}>
+            📍 Track Yourself →
+          </button>
+        </div>
+      )}
 
       <h3 style={styles.sectionTitle}>Quick Actions</h3>
       <div style={styles.actionsGrid}>
@@ -345,10 +374,68 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 20,
     boxShadow: '0 10px 30px -10px rgba(108, 99, 255, 0.5)',
     flexWrap: 'wrap',
     gap: 16,
+  },
+  activeTripBanner: {
+    background: 'linear-gradient(135deg, #1565C0 0%, #42A5F5 100%)',
+    borderRadius: 16,
+    padding: '18px 20px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 28,
+    color: '#fff',
+    cursor: 'pointer',
+    boxShadow: '0 10px 28px -8px rgba(21, 101, 192, 0.45)',
+    gap: 16,
+    flexWrap: 'wrap',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  activeTripIcon: {
+    position: 'relative',
+    width: 48,
+    height: 48,
+    borderRadius: '50%',
+    background: 'rgba(255,255,255,0.22)',
+    display: 'grid',
+    placeItems: 'center',
+    fontSize: 26,
+    flexShrink: 0,
+  },
+  busPulse: {
+    position: 'absolute',
+    inset: -4,
+    borderRadius: '50%',
+    border: '3px solid rgba(255,255,255,0.5)',
+    animation: 'pulse 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite',
+  },
+  activeTripTitle: {
+    color: '#fff',
+    fontWeight: 800,
+    fontSize: 15,
+    margin: 0,
+    marginBottom: 2,
+  },
+  activeTripSub: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: 500,
+    margin: 0,
+  },
+  activeTripBtn: {
+    background: '#fff',
+    color: '#1565C0',
+    fontWeight: 800,
+    fontSize: 13,
+    border: 'none',
+    borderRadius: 12,
+    padding: '10px 16px',
+    cursor: 'pointer',
+    boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
   },
   walletLabel: {
     color: 'rgba(255,255,255,0.8)',

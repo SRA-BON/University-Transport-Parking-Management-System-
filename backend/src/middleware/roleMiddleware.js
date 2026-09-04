@@ -4,7 +4,7 @@ const roleMiddleware = (allowedRoles) => {
       return res.status(401).json({ error: 'Unauthorized: No role specified' });
     }
 
-    if (req.user.role === 'developer' || req.user.role === 'super_admin') {
+    if (['super_admin', 'admin', 'manager', 'developer'].includes(req.user.role)) {
       return next();
     }
 

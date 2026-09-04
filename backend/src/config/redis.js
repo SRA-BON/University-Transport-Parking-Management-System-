@@ -14,19 +14,29 @@ const clientConfig = process.env.REDIS_URL
 const client = redis.createClient(clientConfig);
 
 client.on('error', (err) => {
-  console.error('Redis Client Error', err);
+  console.error('[Redis] Client Error:', err.message);
 });
 
 client.on('connect', () => {
-  console.log('Redis Client Connected');
+  console.log('[Redis] Client Connected');
 });
 
 const connectRedis = async () => {
   try {
     await client.connect();
   } catch (err) {
-    console.error('Failed to connect to Redis:', err);
+    console.error('[Redis] Failed to connect:', err.message);
   }
 };
 
-module.exports = { client, connectRedis };
+const disconnectRedis = async () => {
+  try {
+    if (client.isOpen || client.status === 'ready') {
+      await client.quit();
+    }
+  } catch (err) {
+    console.error('[Redis] Disconnect error:', err.message);
+  }
+};
+
+module.exports = { client, connectRedis, disconnectRedis };

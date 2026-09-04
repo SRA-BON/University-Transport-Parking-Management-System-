@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
@@ -18,7 +18,7 @@ interface ParkingSession {
 }
 
 export default function Parking() {
-  const { } = useAuthStore();
+  const { user } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [sessions, setSessions] = useState<ParkingSession[]>([]);
   const [activeSession, setActiveSession] = useState<ParkingSession | null>(null);
@@ -26,32 +26,61 @@ export default function Parking() {
   const [capacity, setCapacity] = useState<any>(null);
   const [feeRate, setFeeRate] = useState<number>(10);
   const [walletBalance, setWalletBalance] = useState<number>(0);
+  const [parkingLoading, setParkingLoading] = useState(false);
+  const [parkingResult, setParkingResult] = useState<{ type: 'success' | 'error' | 'warning'; message: string; detail?: string } | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [sessRes, activeRes, profRes, capRes, feeRes, walletRes] = await Promise.all([
-        api.get('/parking/sessions').then(r => r).catch(() => ({ data: { sessions: [] } })),
-        api.get('/parking/sessions/active').then(r => r).catch(() => ({ data: { session: null } })),
+        api.get('/parking/sessions').then(r => r).catch(err => {
+          console.warn('[Parking] sessions fetch failed:', err.response?.status, err.message);
+          return { data: { sessions: [] } };
+        }),
+        api.get('/parking/sessions/active').then(r => r).catch(err => {
+          console.warn('[Parking] active-session fetch failed:', err.response?.status, err.message);
+          return { data: { session: null } };
+        }),
         api.get('/parking/profile').then(r => r).catch(() => ({ data: { profile: null } })),
         api.get('/parking/capacity').then(r => r).catch(() => ({ data: { capacity: { total_spots: 100, occupied_spots: 0 } } })),
         api.get('/parking/fee-rate').then(r => r).catch(() => ({ data: { ratePerHour: 10 } })),
-        api.get('/wallets').then(r => r).catch(() => ({ data: { balance: 0 } })),
+        api.get('/wallets').then(r => r).catch(err => {
+          console.warn('[Parking] wallet fetch failed:', err.response?.status, err.message);
+          return { data: { balance: 0 } };
+        }),
       ]);
-      setSessions(Array.isArray(sessRes.data?.sessions) ? sessRes.data.sessions : []);
-      setActiveSession(activeRes.data?.session || null);
+      const rawSessions = Array.isArray(sessRes.data?.sessions) ? sessRes.data.sessions : [];
+      setSessions(rawSessions.map((s: any) => ({
+        ...s,
+        fee: s.fee != null ? Number(s.fee) : null,
+        duration_minutes: s.duration_minutes != null ? Number(s.duration_minutes) : null,
+      })));
+      const rawActive = activeRes.data?.session || null;
+      if (rawActive) {
+        setActiveSession({
+          ...rawActive,
+          fee: rawActive.fee != null ? Number(rawActive.fee) : null,
+          duration_minutes: rawActive.duration_minutes != null ? Number(rawActive.duration_minutes) : null,
+        });
+      } else {
+        setActiveSession(null);
+      }
       setProfile(profRes.data?.profile || null);
       const cap = capRes.data?.capacity || capRes.data || {};
       setCapacity({
         id: cap.id,
         total_spots: Number(cap.total_spots) || 100,
         occupied_spots: Number(cap.occupied_spots) || 0,
+        car_total_spots: Number(cap.car_total_spots) || 200,
+        car_occupied_spots: Number(cap.car_occupied_spots) || 0,
+        bike_total_spots: Number(cap.bike_total_spots) || 400,
+        bike_occupied_spots: Number(cap.bike_occupied_spots) || 0,
       });
       setFeeRate(Number(feeRes.data?.ratePerHour ?? 10) || 10);
       const wData = walletRes.data;
       setWalletBalance(Number(wData?.balance) || 0);
     } catch (e) {
-      console.error(e);
+      console.error('[Parking] loadData error:', e);
     } finally {
       setLoading(false);
     }
@@ -97,7 +126,7 @@ export default function Parking() {
               <div style={styles.activeTitle}>🚗 Active Parking Session</div>
               <div style={styles.activeMeta}>
                 Token <strong>#{activeSession.digital_token}</strong> · Entry:{' '}
-                <strong>{new Date(activeSession.entry_time).toLocaleString()}</strong> ·{' '}
+                <strong>{new Date(activeSession.entry_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}</strong> ·{' '}
                 Vehicle: <strong>{activeSession.vehicle_reg_no}</strong>
               </div>
             </div>
@@ -190,6 +219,62 @@ export default function Parking() {
           <div style={styles.actionTitle}>Recharge Wallet</div>
           <div style={styles.actionDesc}>Add funds for parking & transport payments</div>
         </Link>
+        {/* Self-service parking scan — no ID input, uses logged-in student identity */}
+        <div style={{ ...styles.actionCard, border: activeSession ? '2px solid #E65100' : '2px dashed #6C63FF' }}>
+          <div style={{ ...styles.actionIcon, background: activeSession ? 'linear-gradient(135deg, #FFEBEE, #FFCDD2)' : 'linear-gradient(135deg, #EDE7F6, #D1C4E9)' }}>
+            {activeSession ? '🛑' : '🅿️'}
+          </div>
+          <div style={{ ...styles.actionTitle, color: activeSession ? '#E65100' : '#6C63FF' }}>
+            {activeSession ? 'Active Parking' : 'Start Parking'}
+          </div>
+          <div style={styles.actionDesc}>
+            {activeSession
+              ? `In since ${new Date(activeSession.entry_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })} · Token #${activeSession.digital_token}`
+              : 'Tap SCAN-entry to record your vehicle entry'}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            {!activeSession && (
+              <button
+                onClick={handleParkingScan}
+                disabled={parkingLoading}
+                style={{
+                  padding: '9px 18px', borderRadius: 10, border: 'none',
+                  background: parkingLoading ? '#ccc' : 'linear-gradient(135deg, #6C63FF 0%, #8B83FF 100%)',
+                  color: '#fff', fontWeight: 800, fontSize: 13,
+                  cursor: parkingLoading ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 12px -4px rgba(108,99,255,0.5)',
+                }}
+              >
+                {parkingLoading ? '⏳' : '📡 SCAN-entry'}
+              </button>
+            )}
+            {activeSession && (
+              <button
+                onClick={handleParkingScan}
+                disabled={parkingLoading}
+                style={{
+                  padding: '9px 18px', borderRadius: 10, border: 'none',
+                  background: parkingLoading ? '#ccc' : 'linear-gradient(135deg, #E65100 0%, #FF8A65 100%)',
+                  color: '#fff', fontWeight: 800, fontSize: 13,
+                  cursor: parkingLoading ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 12px -4px rgba(230,81,0,0.5)',
+                }}
+              >
+                {parkingLoading ? '⏳' : '📡 SCAN-exit'}
+              </button>
+            )}
+          </div>
+          {parkingResult && (
+            <div style={{
+              marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+              background: parkingResult.type === 'success' ? '#E8F5E9' : parkingResult.type === 'warning' ? '#FFF8E1' : '#FFEBEE',
+              color: parkingResult.type === 'success' ? '#2E7D32' : parkingResult.type === 'warning' ? '#E65100' : '#C62828',
+            }}>
+              {parkingResult.type === 'success' ? '✅ ' : parkingResult.type === 'warning' ? '⚠️ ' : '❌ '}{parkingResult.message}
+              {parkingResult.detail && <div style={{ fontSize: 11, marginTop: 3, opacity: 0.85 }}>{parkingResult.detail}</div>}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ marginTop: 24 }}>
@@ -235,12 +320,12 @@ export default function Parking() {
                     <div style={styles.hColTime}>
                       <div style={styles.hTimeRow}>
                         <span style={styles.hTimeLabelGreen}>▶</span>
-                        <span>{new Date(s.entry_time).toLocaleString()}</span>
+                        <span>{new Date(s.entry_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}</span>
                       </div>
                       {s.exit_time ? (
                         <div style={{ ...styles.hTimeRow, marginTop: 4 }}>
                           <span style={styles.hTimeLabelRed}>■</span>
-                          <span>{new Date(s.exit_time).toLocaleString()}</span>
+                          <span>{new Date(s.exit_time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}</span>
                         </div>
                       ) : (
                         <div style={{ ...styles.hTimeRow, marginTop: 4 }}>
@@ -258,7 +343,7 @@ export default function Parking() {
                     </div>
                     <div style={styles.hColFee}>
                       {s.fee !== null ? (
-                        <span style={styles.feeAmount}>৳ {s.fee.toFixed(2)}</span>
+                        <span style={styles.feeAmount}>৳ {Number(s.fee || 0).toFixed(2)}</span>
                       ) : isActive ? (
                         <span style={{ color: 'var(--warning-text)', fontSize: 12, fontWeight: 600 }}>Pending</span>
                       ) : (
@@ -285,6 +370,36 @@ export default function Parking() {
       </div>
     </div>
   );
+
+  async function handleParkingScan() {
+    setParkingLoading(true);
+    setParkingResult(null);
+    try {
+      // No body needed — backend uses req.user.id from JWT to identify student
+      const res = await api.post('/parking/self-scan', {});
+      const action = res.data.action;
+      const s = res.data;
+      if (action === 'entry') {
+        setParkingResult({
+          type: 'success',
+          message: `✅ Parking entry recorded!`,
+          detail: `Vehicle: ${s.vehicle?.registration_no} · Token: ${s.entry?.digital_token}`,
+        });
+      } else {
+        setParkingResult({
+          type: 'success',
+          message: `✅ Exit done · Fee: ৳${Number(s.bill?.fee || 0).toFixed(2)}`,
+          detail: `Duration: ${s.session?.duration_minutes} min · Wallet: ৳${Number(s.wallet?.balance_after || 0).toFixed(2)}`,
+        });
+      }
+      setTimeout(() => loadData(), 2000);
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.response?.data?.message || 'Parking scan failed.';
+      setParkingResult({ type: 'error', message: msg });
+    } finally {
+      setParkingLoading(false);
+    }
+  }
 }
 
 function LiveClock({ entryTime }: { entryTime: string }) {
@@ -633,3 +748,40 @@ const styles: Record<string, React.CSSProperties> = {
   hColFee: { flex: '0 0 100px' },
   hColStatus: { flex: '0 0 110px', display: 'flex', justifyContent: 'flex-end' },
 };
+
+const modalOverlay: React.CSSProperties = {
+  position: 'fixed', inset: 0,
+  background: 'rgba(0,0,0,0.45)',
+  display: 'grid', placeItems: 'center',
+  zIndex: 9999, padding: 20,
+};
+
+const modalBox: React.CSSProperties = {
+  width: 'min(440px, 100%)',
+  background: 'var(--bg-card)',
+  borderRadius: 14,
+  padding: '20px 20px 16px',
+  boxShadow: '0 24px 64px rgba(0,0,0,0.3)',
+  border: '2px solid #6C63FF',
+};
+
+const modalCancelBtn: React.CSSProperties = {
+  padding: '9px 16px',
+  borderRadius: 10,
+  border: '1px solid var(--border-color)',
+  background: 'var(--bg-primary)',
+  color: 'var(--text-primary)',
+  fontWeight: 800, fontSize: 12,
+  cursor: 'pointer',
+};
+
+const modalOkBtn: React.CSSProperties = {
+  padding: '9px 16px',
+  borderRadius: 10,
+  border: 'none',
+  color: '#fff',
+  fontWeight: 800, fontSize: 12,
+  boxShadow: '0 4px 14px rgba(108,99,255,0.3)',
+  transition: 'background 0.15s ease',
+};
+

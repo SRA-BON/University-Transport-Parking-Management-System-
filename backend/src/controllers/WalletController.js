@@ -1,10 +1,13 @@
-const Wallet          = require('../models/Wallet');
-const PendingPayment  = require('../models/PendingPayment');
+const Wallet = require('../models/Wallet');
+const PendingPayment = require('../models/PendingPayment');
+const SystemSetting = require('../models/SystemSetting');
 const SSLCommerzService = require('../services/sslcommerzService');
 const NotificationService = require('../services/NotificationService');
-const User            = require('../models/User');
-const pool            = require('../config/db');
-const crypto          = require('crypto');
+const User = require('../models/User');
+const pool = require('../config/db');
+const crypto = require('crypto');
+
+const FRONTEND_URL = () => (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/wallets
@@ -48,12 +51,21 @@ exports.getTransactionHistory = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getAllTransactions = async (req, res) => {
   try {
-    if (!['manager', 'super_admin'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Forbidden' });
+    if (!['super_admin', 'admin', 'manager', 'developer'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
     }
-    const result = await pool.query(
-      'SELECT t.*, u.name as user_name, u.email as user_email, u.student_id FROM transactions t JOIN wallets w ON t.wallet_id = w.id JOIN users u ON w.user_id = u.id ORDER BY t.created_at DESC'
-    );
+    const result = await pool.query(`
+      SELECT t.*, u.name as user_name, u.email as user_email, 
+      COALESCE(s.student_id, m.manager_id, b.bus_attendant_id, p.parking_attendant_id) as student_id
+      FROM transactions t 
+      JOIN wallets w ON t.wallet_id = w.id 
+      JOIN users u ON w.user_id = u.id 
+      LEFT JOIN students s ON s.user_id = u.id
+      LEFT JOIN managers m ON m.user_id = u.id
+      LEFT JOIN bus_attendants b ON b.user_id = u.id
+      LEFT JOIN parking_attendants p ON p.user_id = u.id
+      ORDER BY t.created_at DESC
+    `);
     res.status(200).json({ transactions: result.rows });
   } catch (error) {
     console.error('Get all transactions error:', error);
@@ -73,18 +85,11 @@ exports.rechargeWallet = async (req, res) => {
       return res.status(400).json({ error: 'Invalid amount' });
     }
 
-    // Test / instant mode — skip SSLCommerz gateway
-    if (method === 'test') {
-      const description  = `Recharge via test (instant)`;
-      const updatedWallet = await Wallet.updateBalance(userId, amount, description);
-      return res.status(200).json({ message: 'Wallet recharged successfully', wallet: updatedWallet, redirectUrl: null });
-    }
-
     // Generate a unique transaction ID
     const transactionId = crypto.randomBytes(16).toString('hex');
 
     // Store pending payment record
-    await PendingPayment.create(userId, transactionId, amount);
+    await PendingPayment.create(userId, transactionId, amount, 'sslcommerz', 'pending');
 
     // Fetch user details for SSLCommerz customer fields
     const user = await User.findById(userId);
@@ -425,5 +430,373 @@ exports.handleIPN = async (req, res) => {
   } catch (error) {
     // Catch-all: 200 was already sent, just log for debugging
     console.error('[IPN] Unhandled error:', error.message, error.stack);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/wallets/bkash-config
+// Returns the admin's personal bKash account number for display in the UI.
+// Mutable via system_settings table — admin changes live at runtime without redeploy.
+// Also returns auto-verify flag so UI can inform user whether manual verification
+// waits for admin approval or is instantly credited.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.getBkashConfig = async (req, res) => {
+  try {
+    const [adminBkashNumber, adminBkashName] = await Promise.all([
+      SystemSetting.get('bkash.admin_personal_number'),
+      SystemSetting.get('bkash.admin_personal_name'),
+    ]);
+    res.status(200).json({
+      adminBkashNumber,
+      adminBkashName,
+    });
+  } catch (error) {
+    console.error('[Wallet] bKash config error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/wallets/bkash-settings
+// Staff only: returns ALL bKash system settings for configuration UI.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.getBkashSettings = async (req, res) => {
+  try {
+    if (!['manager', 'super_admin', 'admin', 'developer'].includes(req.user?.role || '')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
+    }
+    const all = await SystemSetting.getAll();
+    res.status(200).json({
+      settings: {
+        adminPersonalNumber: all['bkash.admin_personal_number'],
+        adminPersonalName:  all['bkash.admin_personal_name'],
+      },
+    });
+  } catch (error) {
+    console.error('[Wallet] bKash settings error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/wallets/bkash-settings
+// Staff only: save admin bKash number / auto-verify preference
+// ─────────────────────────────────────────────────────────────────────────────
+exports.saveBkashSettings = async (req, res) => {
+  try {
+    if (!['manager', 'super_admin', 'admin', 'developer'].includes(req.user?.role || '')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
+    }
+    const { adminPersonalNumber, adminPersonalName } = req.body || {};
+    const cleanNum = (adminPersonalNumber || '').toString().replace(/\D/g, '');
+    if (!/^\d{10,15}$/.test(cleanNum)) {
+      return res.status(400).json({ error: 'bKash number must be 10-15 digits' });
+    }
+    await SystemSetting.set('bkash.admin_personal_number', cleanNum, req.user.id);
+    await SystemSetting.set('bkash.admin_personal_name', String(adminPersonalName || 'Transport Admin'), req.user.id);
+    const all = await SystemSetting.getAll();
+    res.status(200).json({
+      message: 'bKash wallet settings saved.',
+      settings: {
+        adminPersonalNumber: all['bkash.admin_personal_number'],
+        adminPersonalName:  all['bkash.admin_personal_name'],
+      },
+    });
+  } catch (error) {
+    console.error('[Wallet] save bKash settings error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/wallets/bkash/submit
+// User submits a bKash Send Money transfer they completed from their personal
+// bKash wallet to the admin's personal bKash wallet.
+//
+// AUTO-VERIFY FLOW (default — when bkash.auto_verify = 'true'):
+//   Since personal bKash accounts have NO public merchant/Checkout/API, the
+//   system cannot programmatically verify Send Money receipts against bKash
+//   servers. Instead we trust the TrxID, IMMEDIATELY credit the wallet,
+//   and mark the payment as completed with an auto_verified:true flag.
+//   Admin retains ability to REVERSE the charge later if the money never actually
+//   arrived (via /bkash/reverse/:transactionId endpoint).
+//
+// MANUAL FLOW (when bkash.auto_verify = 'false'):
+//   Original behaviour — write to pending_bkash_verification queue, wait for staff
+//   Approve & Credit button on the admin panel.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.submitBkashPayment = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { amount, userBkashNumber, bkashTransactionId } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+    const cleanBkash = (userBkashNumber || '').toString().replace(/^\+?(?:88)?/, '');
+    if (!/^\d{11}$/.test(cleanBkash)) {
+      return res.status(400).json({ error: 'Please enter a valid 11-digit bKash account number' });
+    }
+    if (!bkashTransactionId || bkashTransactionId.length < 4) {
+      return res.status(400).json({ error: 'Please enter the bKash Transaction ID (TrxID)' });
+    }
+
+    const transactionId = 'BK' + crypto.randomBytes(12).toString('hex').toUpperCase();
+    const adminBkashNumber = await SystemSetting.get('bkash.admin_personal_number');
+    const adminBkashName  = await SystemSetting.get('bkash.admin_personal_name');
+
+    const initialStatus = 'pending_bkash_verification';
+    const payment = await PendingPayment.create(userId, transactionId, amount, 'bkash_manual', initialStatus);
+
+    const meta = {
+      method: 'bkash_manual',
+      user_bkash_number: cleanBkash,
+      bkash_transaction_id: bkashTransactionId,
+      admin_bkash_number: adminBkashNumber,
+      admin_bkash_name:   adminBkashName,
+      submitted_at: new Date().toISOString(),
+    };
+
+    // ── MANUAL: queue for admin review ─────────────────────────────────────
+    await PendingPayment.updateStatus(payment.id, 'pending_bkash_verification', meta);
+    return res.status(201).json({
+      message: 'bKash payment submitted for manual verification. Wallet will be recharged once admin confirms the Send Money receipt.',
+      transactionId,
+      status: 'pending_bkash_verification',
+      autoVerify: false,
+      expectedAmount: amount,
+      adminBkashNumber,
+    });
+  } catch (error) {
+    console.error('[Wallet] Submit bKash payment error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/wallets/bkash/reverse/:transactionId
+// Staff only: undo/revert an auto-credited (or admin-approved) bKash payment.
+// Used when admin checks their personal bKash SMS/statement and discovers
+// the user never actually sent the money (fraudulent TrxID claim).
+// Deducts the full amount from the user's wallet (blocks if insufficient,
+// or allows negative with a wallet-debt note if balance cannot cover reversal).
+// ─────────────────────────────────────────────────────────────────────────────
+exports.reverseBkashPayment = async (req, res) => {
+  try {
+    if (!['manager', 'super_admin', 'admin', 'developer'].includes(req.user?.role || '')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
+    }
+    const { transactionId } = req.params;
+    const { adminNote, force = false } = req.body || {};
+
+    const pending = await PendingPayment.findByTransactionId(transactionId);
+    if (!pending) return res.status(404).json({ error: 'Payment not found' });
+    if (pending.method !== 'bkash_manual') return res.status(400).json({ error: 'Not a bKash manual payment' });
+    if (pending.status === 'reversed') return res.status(400).json({ error: 'Payment already reversed' });
+    if (pending.status === 'pending_bkash_verification') {
+      // If still pending, just mark cancelled
+      await PendingPayment.updateStatus(pending.id, 'cancelled', {
+        ...(pending.gateway_response || {}),
+        cancelled_by: req.user.id,
+        cancelled_at: new Date().toISOString(),
+        admin_note: adminNote || 'Rejected without prior credit',
+      });
+      return res.status(200).json({ message: 'Pending payment cancelled — wallet was never touched.' });
+    }
+    if (pending.status !== 'completed') {
+      return res.status(400).json({ error: `Cannot reverse status=${pending.status}` });
+    }
+
+    const amount = parseFloat(pending.amount);
+    // Try to debit wallet; allow overdraft if force=true
+    const negative_ = await (async () => {
+      try {
+        return await Wallet.updateBalance(pending.user_id, -amount,
+          `bKash reversal of ${pending.transaction_id} reversed ৳${amount} (admin: ${req.user.name || 'Admin'}${adminNote ? ' — ' + adminNote : ''})`);
+      } catch (e) {
+        if (force) {
+          // Fallback: force-update bypass. Actually Wallet.updateBalance balance to allow negative
+          const walletRow = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [pending.user_id]);
+          if (walletRow.rows.length) {
+            await pool.query(
+              `UPDATE wallets SET balance = balance - $1 WHERE id = $2`,
+              [amount, walletRow.rows[0].id]
+            );
+            await pool.query(
+              `INSERT INTO transactions (user_id, wallet_id, amount, description, transaction_type, created_at)
+               VALUES ($1, $2, -$3, $4, 'reversal', NOW())`,
+              [pending.user_id, walletRow.rows[0].id, amount,
+                `Forced bKash reversal ৳${amount} by ${req.user.name || 'Admin'}${adminNote ? ' — ' + adminNote : ''}`]
+            );
+            return { balance_after: 'debt_created' };
+          }
+          throw e;
+        }
+        throw e;
+      }
+    })();
+
+    await PendingPayment.updateStatus(pending.id, 'reversed', {
+      ...(pending.gateway_response || {}),
+      reversed_by_user_id: req.user.id,
+      reversed_by_name:  req.user.name,
+      reversed_at:  new Date().toISOString(),
+      admin_note: adminNote || null,
+    });
+    return res.status(200).json({
+      message: `Reversed — ৳${amount} debited from user wallet.`,
+      wallet: negative_,
+    });
+  } catch (error) {
+    console.error('[Wallet] bKash reverse error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/wallets/reverse-direct
+// Staff-only generic reversal helper (used by "Completed bKash reversable" UI) —
+// deducts arbitrary amount from a user wallet and writes a reversal transaction.
+// Designed for undoing recharges that don't have a matching pending_payment row
+// (e.g. test-mode recharges, or bKash rows that were marked completed before
+//  the admin notices they were never actually paid on their personal statement).
+// ─────────────────────────────────────────────────────────────────────────────
+exports.reverseDirect = async (req, res) => {
+  try {
+    if (!['manager', 'super_admin', 'admin', 'developer'].includes(req.user?.role || '')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
+    }
+    const { user_id, amount, reference, force = false } = req.body || {};
+    const amtNum = parseFloat(amount);
+    if (!user_id || !amtNum || amtNum <= 0) {
+      return res.status(400).json({ error: 'user_id and positive amount are required' });
+    }
+
+    let wallet;
+    try {
+      wallet = await Wallet.updateBalance(
+        user_id,
+        -amtNum,
+        reference || `Direct reversal ৳${amtNum} by ${req.user?.name || 'Admin'}`
+      );
+    } catch (e) {
+      if (force) {
+        const row = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [user_id]);
+        if (row.rows.length) {
+          await pool.query('UPDATE wallets SET balance = balance - $1 WHERE id = $2', [amtNum, row.rows[0].id]);
+          await pool.query(
+            `INSERT INTO transactions (user_id, wallet_id, amount, description, transaction_type, created_at)
+             VALUES ($1, $2, -$3, $4, 'reversal', NOW())`,
+            [user_id, row.rows[0].id, amtNum,
+              `Forced direct reversal ৳${amtNum} by ${req.user?.name || 'Admin'}${reference ? ' — ' + reference : ''}`]
+          );
+          wallet = { balance_after: 'debt_created' };
+        } else {
+          throw e;
+        }
+      } else {
+        throw e;
+      }
+    }
+    res.status(200).json({ message: 'Reversal applied.', wallet });
+  } catch (error) {
+    console.error('[Wallet] reverseDirect error:', error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/wallets/bkash/pending
+// Manager/Admin only. Lists all bKash manual payments awaiting verification.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.listPendingBkashPayments = async (req, res) => {
+  try {
+    if (!['super_admin', 'admin', 'manager', 'developer'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
+    }
+    const rows = await PendingPayment.listPendingBkash();
+    res.status(200).json({ payments: rows });
+  } catch (error) {
+    console.error('[Wallet] List pending bKash error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/wallets/bkash/verify/:transactionId
+// Manager/Admin only. Approves or rejects a manually-submitted bKash payment.
+// Approve → credits user wallet and pushes success notification + marks completed.
+// Reject → marks failed, notifies user of rejection.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.verifyBkashPayment = async (req, res) => {
+  try {
+    if (!['super_admin', 'admin', 'manager', 'developer'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
+    }
+
+    const { transactionId } = req.params;
+    const { approved, adminNote, creditAmount } = req.body;
+
+    const pending = await PendingPayment.findByTransactionId(transactionId);
+    if (!pending) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+    if (pending.status !== 'pending_bkash_verification') {
+      return res.status(400).json({ error: `Payment already processed (status: ${pending.status})` });
+    }
+
+    // Admin may override the amount to credit (e.g. if student entered wrong amount)
+    const submittedAmount = parseFloat(pending.amount);
+    const creditAmt = creditAmount && parseFloat(creditAmount) > 0
+      ? parseFloat(creditAmount)
+      : submittedAmount;
+    const now = new Date().toISOString();
+
+    if (approved) {
+      await PendingPayment.updateStatus(pending.id, 'completed', {
+        ...(pending.gateway_response || {}),
+        verified_by_user_id: req.user.id,
+        verified_by_name: req.user.name,
+        verified_at: now,
+        admin_note: adminNote || null,
+        submitted_amount: submittedAmount,
+        credited_amount: creditAmt,
+      });
+
+      const description = `bKash recharge ৳${creditAmt}${creditAmt !== submittedAmount ? ` (you submitted ৳${submittedAmount})` : ''} — verified${adminNote ? ': ' + adminNote : ''}`;
+      const wallet = await Wallet.updateBalance(pending.user_id, creditAmt, description);
+
+      NotificationService.notifyPaymentSuccess(pending.user_id, creditAmt)
+        .catch(err => console.error('Failed to notify bKash payment success:', err));
+
+      return res.status(200).json({
+        message: `Wallet credited ৳${creditAmt} via bKash verification.`,
+        wallet,
+      });
+    }
+
+    await PendingPayment.updateStatus(pending.id, 'failed', {
+      ...(pending.gateway_response || {}),
+      rejected_by_user_id: req.user.id,
+      rejected_by_name: req.user.name,
+      rejected_at: now,
+      admin_note: adminNote || 'Rejected by admin',
+    });
+
+    // Create a transaction record for the rejection so the user sees it in their history
+    const walletRow = await pool.query('SELECT id FROM wallets WHERE user_id = $1', [pending.user_id]);
+    if (walletRow.rows.length) {
+      await pool.query(
+        `INSERT INTO transactions (wallet_id, amount, type, description, created_at) VALUES ($1, $2, $3, $4, $5)`,
+        [walletRow.rows[0].id, 0, 'rejected', `bKash recharge rejected ৳${submittedAmount} (TrxID: ${pending.transaction_id})${adminNote ? ' — ' + adminNote : ''}`, now]
+      );
+    }
+
+    return res.status(200).json({
+      message: 'bKash payment rejected. Wallet was not credited.',
+    });
+  } catch (error) {
+    console.error('[Wallet] Verify bKash payment error:', error);
+    res.status(500).json({ error: error.message });
   }
 };

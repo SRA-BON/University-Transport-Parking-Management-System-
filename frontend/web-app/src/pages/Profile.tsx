@@ -4,6 +4,7 @@ import api from '../services/api';
 
 export default function Profile() {
   const { user, signIn } = useAuthStore();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const [form, setForm] = useState({
     name: user?.name || '',
     department: user?.department || '',
@@ -53,9 +54,14 @@ export default function Profile() {
               <span style={{ ...styles.pill, background: '#EDE7F6', color: '#4527A0' }}>
                 {user?.role?.toUpperCase()}
               </span>
-              <span style={{ ...styles.pill, background: '#E3F2FD', color: '#1565C0' }}>
-                ID: {user?.student_id}
-              </span>
+              {!isAdmin && (
+                <span style={{ ...styles.pill, background: '#E3F2FD', color: '#1565C0' }}>
+                  {user?.role === 'student' ? 'Student ID' : 
+                   user?.role === 'manager' ? 'Manager ID' : 
+                   user?.role === 'bus_attendant' ? 'Bus Attendant ID' : 
+                   user?.role === 'parking_attendant' ? 'Parking Attendant ID' : 'ID'}: {user?.display_id || user?.student_id || '—'}
+                </span>
+              )}
               {user?.no_show_count !== undefined && user.no_show_count > 0 && (
                 <span style={{ ...styles.pill, background: '#FFF3E0', color: '#E65100' }}>
                   ⚠️ {user.no_show_count} No-show
@@ -81,10 +87,17 @@ export default function Profile() {
               <label style={styles.label}>Email</label>
               <input style={styles.input} value={user?.email || ''} disabled />
             </div>
-            <div>
-              <label style={styles.label}>Student ID</label>
-              <input style={styles.input} value={user?.student_id || ''} disabled />
-            </div>
+            {!isAdmin && (
+              <div>
+                <label style={styles.label}>
+                  {user?.role === 'student' ? 'Student ID' : 
+                   user?.role === 'manager' ? 'Manager ID' : 
+                   user?.role === 'bus_attendant' ? 'Bus Attendant ID' : 
+                   user?.role === 'parking_attendant' ? 'Parking Attendant ID' : 'ID'}
+                </label>
+                <input style={styles.input} value={user?.student_id || ''} disabled />
+              </div>
+            )}
             <div>
               <label style={styles.label}>Department</label>
               <input

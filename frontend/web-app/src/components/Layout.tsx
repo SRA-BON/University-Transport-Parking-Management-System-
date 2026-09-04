@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
+import api from '../services/api';
+import { useRFIDScanner } from '../hooks/useRFIDScanner';
+import { useRFIDStore } from '../store/rfidStore';
 
 export default function Layout() {
   const { user, signOut } = useAuthStore();
@@ -17,10 +20,6 @@ export default function Layout() {
   }, [theme]);
 
   const toggleTheme = () => {
-    setTheme((prev) => (prev === 'light' ? 'dark' : 'dark'));
-  };
-
-  const toggleThemeActual = () => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
 
@@ -58,9 +57,10 @@ export default function Layout() {
     transition: 'background 0.15s ease, color 0.15s ease',
   });
 
-  const isSuperAdminOrManager = ['super_admin', 'developer', 'manager'].includes(user?.role || '');
-  const isParkingStaff = isSuperAdminOrManager || user?.role === 'parking_attendant' || user?.role === 'bus_attendant';
-  const showStudentFeatures = !['manager', 'bus_attendant', 'parking_attendant', 'admin', 'super_admin', 'developer'].includes(user?.role || '');
+  const isManagementStaff = ['super_admin', 'admin', 'manager', 'developer'].includes(user?.role || '');
+  const showStudentFeatures = user?.role === 'student';
+  const showParkingController = ['super_admin', 'admin', 'manager', 'developer', 'parking_attendant'].includes(user?.role || '');
+  const showTripController = ['super_admin', 'admin', 'manager', 'developer', 'bus_attendant'].includes(user?.role || '');
 
   const sidebarElement = (
     <aside style={{
@@ -84,8 +84,7 @@ export default function Layout() {
           />
         </div>
         <div style={{ flex: 1 }}>
-          <h1 style={styles.brandTitle}>BRACU Transport</h1>
-          <p style={styles.brandSub}>Management System</p>
+          <h1 style={styles.brandTitle}>Bracu Safe Ride</h1>
         </div>
         {isMobile && (
           <button 
@@ -105,32 +104,39 @@ export default function Layout() {
 
       <nav style={styles.nav}>
         <NavLink to="/" end className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🏠 Dashboard</NavLink>
+
         {showStudentFeatures && (
           <>
-            <NavLink to="/explore" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🚍 Find a Bus</NavLink>
+            <NavLink to="/explore" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🚍 Find Bus</NavLink>
             <NavLink to="/bookings" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🎫 My Bookings</NavLink>
-            <NavLink to="/parking" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🏛️ Parking Info</NavLink>
+            <NavLink to="/parking" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🏛️ Parking</NavLink>
             <NavLink to="/recharge" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>💳 Recharge Wallet</NavLink>
           </>
         )}
 
-        {isParkingStaff && (
+        {isManagementStaff && (
+          <>
+            <NavLink to="/admin" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>📋 Admin Panel</NavLink>
+            <NavLink to="/wallet-manager" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>💰 Wallet Manager</NavLink>
+            <NavLink to="/reports" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>📊 Reports &amp; Analytics</NavLink>
+          </>
+        )}
+
+        {showTripController && (
           <NavLink to="/explore" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🚍 Trip Controller</NavLink>
         )}
-        
-        {isSuperAdminOrManager && (
-          <NavLink to="/admin" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>📋 Admin Panel</NavLink>
-        )}
-        
-        {isParkingStaff && (
+        {showParkingController && (
           <NavLink to="/parking-controller" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>⚙️ Parking Controller</NavLink>
+        )}
+        {(showTripController || showParkingController) && (
+          <NavLink to="/global-map" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>🌍 Global Map</NavLink>
         )}
 
         <NavLink to="/profile" className="nav-item" style={navLinkStyle} onClick={() => isMobile && setIsSidebarOpen(false)}>👤 Profile</NavLink>
       </nav>
 
       {/* Theme Toggle Button */}
-      <button onClick={toggleThemeActual} style={styles.themeToggleBtn}>
+      <button onClick={toggleTheme} style={styles.themeToggleBtn}>
         {theme === 'light' ? '🌙 Dark Mode' : '☀️ Light Mode'}
       </button>
 
@@ -166,7 +172,7 @@ export default function Layout() {
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 20 }}>🚍</span>
-            <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>BRACU Transport</span>
+            <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>BRACU Safe Ride</span>
           </div>
           <div style={{ position: 'relative' }}>
             <button 
@@ -182,7 +188,7 @@ export default function Layout() {
             {isSettingsOpen && (
               <div style={styles.mobileSettingsDropdown}>
                 <button className="dropdown-item" style={styles.dropdownBtn} onClick={() => { setIsSettingsOpen(false); navigate('/'); }}>🏠 Dashboard</button>
-                <button className="dropdown-item" style={styles.dropdownBtn} onClick={() => { setIsSettingsOpen(false); toggleThemeActual(); }}>{theme === 'light' ? '🌙 Dark Mode' : '☀️ Light Mode'}</button>
+                <button className="dropdown-item" style={styles.dropdownBtn} onClick={() => { setIsSettingsOpen(false); toggleTheme(); }}>{theme === 'light' ? '🌙 Dark Mode' : '☀️ Light Mode'}</button>
                 <button className="dropdown-item" style={{...styles.dropdownBtn, color: '#e74c3c'}} onClick={() => { setIsSettingsOpen(false); handleLogout(); }}>⏻ Logout</button>
               </div>
             )}
@@ -204,9 +210,88 @@ export default function Layout() {
         ...styles.main,
         padding: isMobile ? '16px' : '32px 40px',
       }}>
+        {!showStudentFeatures && <RFIDScannerStatus />}
         <Outlet />
       </main>
     </div>
+  );
+}
+
+function RFIDScannerStatus() {
+  const { plugged, setPlugged } = useRFIDStore();
+  const [toast, setToast] = useState<{ name: string; id: string; dept?: string } | null>(null);
+  const [toastTimer, setToastTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleScan = useCallback(async (scannedId: string) => {
+    setPlugged(true);
+    if (toastTimer) clearTimeout(toastTimer);
+
+    try {
+      const res = await api.get(`/rfid/lookup?rfid_id=${encodeURIComponent(scannedId)}`);
+      const student = res.data?.user || res.data?.student;
+      if (student) {
+        const info = {
+          name: student.name,
+          id: student.student_id || student.display_id || scannedId,
+          dept: student.department,
+        };
+        setToast(info);
+        const t = setTimeout(() => setToast(null), 5000);
+        setToastTimer(t);
+      } else {
+        setToast({ name: 'Unknown Card', id: scannedId });
+        const t = setTimeout(() => setToast(null), 3000);
+        setToastTimer(t);
+      }
+    } catch {
+      setToast({ name: 'Card scanned', id: scannedId });
+      const t = setTimeout(() => setToast(null), 3000);
+      setToastTimer(t);
+    }
+  }, [toastTimer, setPlugged]);
+
+  useRFIDScanner(handleScan, 50);
+
+  return (
+    <>
+      <div style={{
+        background: plugged ? '#E8F5E9' : '#FFF3E0',
+        color: plugged ? '#2E7D32' : '#E65100',
+        padding: '8px 16px',
+        borderRadius: 8,
+        marginBottom: 16,
+        fontSize: 13,
+        fontWeight: 600,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        border: `1px solid ${plugged ? '#C8E6C9' : '#FFE0B2'}`
+      }}>
+        <span>{plugged ? '🟢 RFID scanner: plugged/active' : '🟠 RFID scanner: unplugged/idle'}</span>
+      </div>
+      {toast && (
+        <div style={{
+          background: 'linear-gradient(135deg, #1565C0 0%, #42A5F5 100%)',
+          color: '#fff',
+          padding: '12px 18px',
+          borderRadius: 10,
+          marginBottom: 16,
+          fontSize: 14,
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          boxShadow: '0 4px 16px rgba(21,101,192,0.35)',
+          animation: 'fadeIn 0.2s ease',
+        }}>
+          <span style={{ fontSize: 22 }}>📡</span>
+          <div>
+            <div>Card Scanned: <strong>{toast.name}</strong></div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>ID: {toast.id}{toast.dept ? ` · ${toast.dept}` : ''}</div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -408,4 +493,3 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 999,
   },
 };
-

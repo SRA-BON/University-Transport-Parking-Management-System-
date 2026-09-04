@@ -39,7 +39,7 @@ const notificationWorker = new Worker('NotificationQueue', async job => {
         [trip.route_id]
       );
 
-      const formattedTime = new Date(trip.departure_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const formattedTime = new Date(trip.departure_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
       const message = `A trip for ${trip.route_name} is scheduled for ${formattedTime} today with ${trip.available_seats} seats available. Book now!`;
 
       for (const row of usersRes.rows) {
